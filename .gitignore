@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Variabili d'ambiente e credenziali
+.env
+.env.local
+config/credentials.json
+*_key.txt
+*.key
+
+# Feedback e log
+feedback_log.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Report generati
+reports/*.pdf
