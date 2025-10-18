@@ -1,0 +1,514 @@
+{
+  "items": [
+    {
+      "id": 1,
+      "title": "Circumstantiality",
+      "type": "objective",
+      "description": "Thinking is circuitous; minor matters cannot be separated from essential matters. The main point gets lost in the description of details, without losing the intentional goal completely (long-winded speech).",
+      "criteria": "Insufficient capacity to process abstract information might be one of several causes for Circumstantiality, as well as the inability to omit minor matters even when the patient knows them to be inessential.",
+      "example": "When asked 'Was it easy to get here?', the patient provides excessive detail about the journey including ticket types, train schedules, and waiting times, losing focus on the simple yes/no question.",
+      "questions": [],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "mild: Circumstantiality is noticed by the examiner, but the exploration is not substantially affected",
+        "3": "moderate: Circumstantiality is noticed by the examiner and the exploration is affected",
+        "4": "severe: The exploration is severely affected"
+      },
+      "default_grade": 2
+    },
+    {
+      "id": 2,
+      "title": "Derailment",
+      "type": "objective",
+      "description": "A pattern of spontaneous speech in which ideas slip off the track onto other thoughts which are clearly but obliquely related. Things may be said in juxtaposition which lack a meaningful relationship.",
+      "criteria": "The speaker gets farther and farther off the track with each derailment without any awareness that the reply no longer has any connection to the question being asked.",
+      "example": "When asked 'Did you enjoy doing that?', patient starts talking about communities, then hair bleach in California, roommate from Chicago, then suddenly jumps to toenail surgery with no logical connection.",
+      "questions": [],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful: Connections between the sentences are still obvious",
+        "2": "moderate: Connections are still obvious but are sometimes not directly related to what has been said before",
+        "3": "severe: The patient slides slowly from one idea to another without any meaningful connection between them",
+        "4": "extreme: The interview is incomprehensible"
+      },
+      "default_grade": 3
+    },
+    {
+      "id": 3,
+      "title": "Tangentiality",
+      "type": "objective",
+      "description": "Ideas do not follow a straight path. Within longer speech passages, content slowly drifts away from where it originally started. The patient does not return to the initial topic.",
+      "criteria": "The patient deviates from the initial topic and fails to return to it.",
+      "example": "When asked 'What city are you from?', patient starts with birthplace but drifts into parents' meeting, financial difficulties, wartime experiences, never returning to answer the original question.",
+      "questions": [],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "mild: The patient deviates slowly from the initial topic, and in a few instances fails to return",
+        "3": "moderate: The patient deviates quickly from the initial topic, and occasionally fails to return",
+        "4": "severe: The patient deviates immediately from the initial topic and never returns"
+      },
+      "default_grade": 2
+    },
+    {
+      "id": 4,
+      "title": "Dissociation of Thinking (Incoherence/Distraction)",
+      "type": "objective",
+      "description": "The content of a phrase, sentence or thought has no reference to what has been said before. Words, sentences and thoughts have no relation to each other.",
+      "criteria": "In contrast to Derailment where associative bridges are still recognizable, here coherence between sentences is absent. In severest occurrences, coherence within a sentence or even within individual words is absent (scattered speech).",
+      "example": "You have possibly heard that they peel off the brain... One will try to stop me the Armageddon.... skywind and weather and that the people will change their mood.",
+      "questions": [],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "incoherence: Single sentences still make sense; however, the relation between them is missing",
+        "3": "disjointed speech: Within one sentence, only parts are related to each other",
+        "4": "scattered speech: Syntax is absent, resulting in an incomprehensible word and syllable mixture (word salad)"
+      },
+      "default_grade": 2
+    },
+    {
+      "id": 5,
+      "title": "Crosstalk",
+      "type": "objective",
+      "description": "The response of the patient misses the point at hand, although he has understood the question. The patient is talking past the question.",
+      "criteria": "The evaluation does not depend on whether the answer is wrong, but that the patient misses the point. Intentional ignoring should not be considered.",
+      "example": "When asked 'Why did you come to the psychiatric unit?', patient responds 'My brother had surgery on his appendix.'",
+      "questions": [],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "mild: Crosstalk occurs several times during the exploration",
+        "3": "moderate: Crosstalk occasionally occurs, often enough that the exploration is hindered",
+        "4": "severe: Crosstalk occurs to most questions. The exploration is considerably hindered"
+      },
+      "default_grade": 2
+    },
+    {
+      "id": 6,
+      "title": "Perseveration",
+      "type": "objective",
+      "description": "Adherence to previously mentioned ideas and topics that no longer fit the current context.",
+      "criteria": "A patient repeats certain sentences or clauses even if expected to give name or describe objects.",
+      "example": "A patient repeats certain sentences or clauses even when expected to give their name or describe objects.",
+      "questions": [],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "mild: During the interview, Perseverations occur several times",
+        "3": "moderate: Perseverations occur occasionally and adversely affect the exploration",
+        "4": "severe: Perseverations occur so frequently that the exploration is considerably hindered"
+      },
+      "default_grade": 2
+    },
+    {
+      "id": 7,
+      "title": "Verbigeration",
+      "type": "objective",
+      "description": "Unnecessary repetition of a single word.",
+      "criteria": "Persistent stereotyped repetition of single words and syllables.",
+      "example": "I am a philosopher, philosopher, I am a philosopher, who composed great literature. I have a calling for this work, a calling, calling.",
+      "questions": [],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "mild: Verbigeration occurs several times during the interview",
+        "3": "moderate: Verbigeration occurs occasionally and complicates communication",
+        "4": "severe: Persistent stereotyped repetition. The exploration is considerably hindered"
+      },
+      "default_grade": 2
+    },
+    {
+      "id": 8,
+      "title": "Rupture of Thought",
+      "type": "objective",
+      "description": "Objectively observed sudden interruption of a previously fluid line of thought. The phenomenon may occur in the middle of a sentence and for no apparent reason.",
+      "criteria": "The patient suddenly stops speaking mid-sentence.",
+      "example": "The patient says: 'I'm feeling fine. My mood is much better because I've......(pause).' When asked why they stopped, explains they suddenly lost their train of thought.",
+      "questions": ["You've suddenly stopped speaking. What was the reason for that?"],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "mild: communication is barely affected",
+        "3": "moderate: communication is moderately affected",
+        "4": "severe: communication is substantially affected"
+      },
+      "default_grade": 2
+    },
+    {
+      "id": 9,
+      "title": "Pressured Speech",
+      "type": "objective",
+      "description": "The speed of speech production is increased.",
+      "criteria": "Speech is accelerated beyond normal conversational pace.",
+      "example": "The patient speaks rapidly without appropriate pauses.",
+      "questions": [],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "mild: The speed of speech production is increased",
+        "3": "moderate: The speed of speech production is considerably increased",
+        "4": "severe: The speed of speech production is extremely increased"
+      },
+      "default_grade": 2
+    },
+    {
+      "id": 10,
+      "title": "Logorrhoea",
+      "type": "objective",
+      "description": "An excessively strong urge to speak. Logorrhoeic speech itself may be coherent and logical. Communication with the patient is hindered. The patient is either not able to recognize when being interrupted or simply ignores such interruptions.",
+      "criteria": "Excessive talking that cannot be easily interrupted. The patient continues speaking despite attempts to interrupt.",
+      "example": "When asked about profession, patient launches into lengthy explanation about jobs, family life, construction work, continuing to speak over examiner's attempts to interrupt.",
+      "questions": [],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "mild: It is possible to interrupt the flow of words",
+        "3": "moderate: It is hard to interrupt the flow of words",
+        "4": "severe: Communication is considerably hindered. Attempts to interrupt are not noticed or deliberately ignored"
+      },
+      "default_grade": 3
+    },
+    {
+      "id": 11,
+      "title": "Manneristic Speech",
+      "type": "objective",
+      "description": "For the observer, speech (word selection, sentence structure, articulation or prosody) seems affected and ornate, eccentric, unnatural, pompous, overblown, fancy, stylised or flowery.",
+      "criteria": "Speech is excessively formal, elaborate, or stylized in an unnatural way.",
+      "example": "When asked about weekend activities: 'But of course, madam. In the first instance, I betook myself to the grocery store, since the obtainment of comestible goods appeared to be necessitated.'",
+      "questions": [],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "mild: Speech usage is Manneristic several times",
+        "3": "moderate: Speech usage is Manneristic occasionally",
+        "4": "severe: Due to Manneristic Speech, the patient is difficult to comprehend"
+      },
+      "default_grade": 2
+    },
+    {
+      "id": 12,
+      "title": "Semantic Paraphasia",
+      "type": "objective",
+      "description": "Substitution of an inappropriate word (the word is semantically related to the appropriate word). The speaker may or may not recognize the error and attempt to correct it.",
+      "criteria": "Wrong words are used that are semantically related to the intended word.",
+      "example": "Using 'sausage' instead of 'cheese', 'grandpa' instead of 'man', 'flower' instead of 'aquarium'.",
+      "questions": [],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful: A few times, inappropriate but comprehensible words ('jacket' for 'coat')",
+        "2": "mild: Inappropriate words several times with larger semantic distance ('sausage' for 'cheese')",
+        "3": "moderate: Semantic distance so great that connection is hardly recognizable",
+        "4": "severe: Frequently uses inappropriate words. Exploration considerably hindered"
+      },
+      "default_grade": 2
+    },
+    {
+      "id": 13,
+      "title": "Phonemic Paraphasia",
+      "type": "objective",
+      "description": "Mispronunciation (with regard to phonetic articulation) of a word. The speaker usually recognizes the error and may attempt to correct it.",
+      "criteria": "Words are mispronounced with phonetic errors.",
+      "example": "Saying 'manana' instead of 'banana'.",
+      "questions": [],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful: Phonemic Paraphasias may occur a few times",
+        "2": "mild: Phonemic Paraphasias occur several times",
+        "3": "moderate: The patient uses Phonemic Paraphasias occasionally",
+        "4": "severe: Frequently uses Phonemic Paraphasias. Exploration considerably hindered"
+      },
+      "default_grade": 2
+    },
+    {
+      "id": 14,
+      "title": "Neologisms",
+      "type": "objective",
+      "description": "New word formations, which do not correspond to lexical conventions. Most Neologisms are not directly intelligible. In extreme cases a new artificial language can be formed.",
+      "criteria": "The patient creates new, non-existent words. Not slang or non-native speaker errors.",
+      "example": "In extreme cases: 'Ak mersku na armabs voligent' (cryptolalia/glossolalia).",
+      "questions": [],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "mild: One Neologism definitely occurs during the interview",
+        "3": "moderate: Several Neologisms occur during the interview",
+        "4": "severe: Communication hindered. In extreme cases cryptolalia is present"
+      },
+      "default_grade": 2
+    },
+    {
+      "id": 15,
+      "title": "Clanging",
+      "type": "objective",
+      "description": "A pattern of speech in which sounds, rather than meaningful relationships, appear to govern word choice, so that intelligibility is impaired and redundant words are introduced.",
+      "criteria": "Words are chosen based on sound similarity (rhyming, punning) rather than meaning.",
+      "example": "I'm not trying to make noise. I'm trying to make sense. If you can make sense out of nonsense, well, have fun. I'm not making sense [cents] anymore. I have to make dollars.",
+      "questions": [],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "mild: Clanging occurs several times during the interview",
+        "3": "moderate: Clanging occurs occasionally. Exploration not significantly limited",
+        "4": "severe: Clanging frequently occurs and largely dominates conversation"
+      },
+      "default_grade": 2
+    },
+    {
+      "id": 16,
+      "title": "Echolalia",
+      "type": "objective",
+      "description": "Senseless repetitions of words and sentences with no regard to their meanings and semantic functions. The patient echoes the words or sentences of the interviewer.",
+      "criteria": "The patient repeats the examiner's words without comprehension. Not habitual clarification by rewording.",
+      "example": "Examiner: 'I would like to speak to you for a few minutes.' Patient: 'Minutes, minutes, minutes, speak to you for a few minutes.'",
+      "questions": [],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "mild: Several times, repeats single words or parts of question, but then answers",
+        "3": "moderate: Occasionally repeats, then generally answers the question",
+        "4": "severe: Frequently repeats. Additional information is not given"
+      },
+      "default_grade": 2
+    },
+    {
+      "id": 17,
+      "title": "Poverty of Content of Speech",
+      "type": "objective",
+      "description": "Although replies are long enough that speech is adequate in amount, it conveys little information. Language tends to be vague, often overly abstract or overly concrete, repetitive, and stereotyped.",
+      "criteria": "The patient speaks at length but provides little actual information. Responses could be summarized in a sentence or two.",
+      "example": "When asked about belief in God, patient gives lengthy vague response about spiritual power and understanding that conveys minimal actual content.",
+      "questions": [],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "mild: Several times, replies are vague or could be abbreviated",
+        "3": "moderate: Occasionally, replies are vague or convey little information",
+        "4": "severe: Most of the interview is vague, empty of content or could be substantially abbreviated"
+      },
+      "default_grade": 3
+    },
+    {
+      "id": 18,
+      "title": "Restricted Thinking",
+      "type": "objective",
+      "description": "Restriction in the range of content, adherence to one topic or a few topics, or fixation on a few key ideas. The patient experiences difficulties in switching from one topic to another.",
+      "criteria": "Patient constantly returns to the same topic despite being offered other subjects for discussion.",
+      "example": "Patient repeatedly returns to discussing backache regardless of what questions are asked about mood, activities, or concentration.",
+      "questions": [],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful: The patient returns to one topic a few times",
+        "2": "mild: Patient sticks to a few topics, conversation about other topics is fairly difficult",
+        "3": "moderate: Constrained to just a few topics. Conversation about other subjects almost impossible",
+        "4": "severe: Sticks to one specific idea. Constantly and immediately returns to the same idea"
+      },
+      "default_grade": 3
+    },
+    {
+      "id": 19,
+      "title": "Slowed Thinking",
+      "type": "objective",
+      "description": "From the observer's perspective, the patient's thought process seems to be slowed down. As a result, the conversation is languid and torpid.",
+      "criteria": "The thought process is objectively slow with long pauses between responses.",
+      "example": "Patient responds with long pauses: '(pause) I've been having a bad time…. (pause) So my sister brought me here.'",
+      "questions": [],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful: Possibly Slowed Thinking; however, conversation not affected",
+        "2": "mild: Examiner notices Slow Thinking, conversation slightly affected",
+        "3": "moderate: Examiner notices Slow Thinking, conversation considerably limited",
+        "4": "severe: Due to sluggish train of thought and long pauses, exploration is not possible or proceeds only with great effort"
+      },
+      "default_grade": 2
+    },
+    {
+      "id": 20,
+      "title": "Poverty of Speech",
+      "type": "objective",
+      "description": "Restriction in the amount of spontaneous speech, so that answers tend to be brief, concrete and unelaborated. Replies may be monosyllabic, and some questions may be left unanswered altogether.",
+      "criteria": "Answers are very brief with minimal elaboration. Interviewer must frequently prompt for more information.",
+      "example": "Q: 'Were you working before hospital?' A: 'Yes.' Q: 'What kind of jobs?' A: 'Oh, some janitor jobs, painting.' Q: 'What work now?' A: 'None.'",
+      "questions": [],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "mild: Several replies do not include appropriately elaborated information",
+        "3": "moderate: Answers consist of a few words. Occasionally questions left unanswered. Monosyllabic replies",
+        "4": "severe: The patient is predominantly mute"
+      },
+      "default_grade": 3
+    },
+    {
+      "id": 21,
+      "title": "Concretism",
+      "type": "objective",
+      "description": "Concretism refers to difficulty in the comprehension of abstract (figurative) sentences or phrases (e.g. the understanding/interpretation of proverbs, metaphors, jokes). The patient adheres to the concrete meaning.",
+      "criteria": "Patient cannot understand figurative language, interprets everything literally.",
+      "example": "Asked to explain 'Hawks will not pick out hawks' eyes', responds: 'Well, hawks are wonderful birds. If there are two hawks together, they won't pick out each other's eyes.'",
+      "questions": ["Would you please explain the proverb 'Hawks will not pick out hawks' eyes.'"],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "mild: The comprehension of figurative meaning is limited",
+        "3": "moderate: Only concrete meaning is expressed",
+        "4": "severe: Even concrete meaning is expressed at best vaguely or not at all"
+      },
+      "default_grade": 2
+    },
+    {
+      "id": 22,
+      "title": "Blocking",
+      "type": "subjective",
+      "description": "Perceived and reported blocking of an ongoing line of thought, also known as 'losing one's train of thought'. Blocking is subjectively noticed by the patient.",
+      "criteria": "Patient reports sudden stopping of thoughts or gradual fading away of thoughts.",
+      "example": "I don't have any thoughts anymore, as if something is cut off. Sometimes, my thoughts stop suddenly.",
+      "questions": ["Do you sometimes feel like your line of thought suddenly stops as if it were blocked, or as if your thoughts gradually faded away?"],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "mild: Patient reports several occurrences. Patient need not feel impaired",
+        "3": "moderate: Patient reports occasional Blocking. Possibly suffers or communication slightly impaired",
+        "4": "severe: Patient reports frequent Blocking. Patient suffers and/or communication impaired"
+      },
+      "default_grade": 2
+    },
+    {
+      "id": 23,
+      "title": "Rumination",
+      "type": "subjective",
+      "description": "The patient is constantly occupied with mostly unpleasant topics. These thoughts center around the same topics without leading to any conclusion. Rumination is experienced as unpleasant and in some cases even torturous.",
+      "criteria": "Patient cannot stop thinking about certain negative topics despite wanting to.",
+      "example": "I can't pay the rent anymore. I'm always worried that I can't pay the bills. I really don't know how this can go on. I don't know how to think of anything else.",
+      "questions": ["Do you feel like you have to think about certain subjects more often than you used to?", "Do you sometimes feel driven to think of one particular subject, even though you want to think of something else?"],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "mild: Rumination occurs, patient slightly affected but still manages everyday responsibilities",
+        "3": "moderate: Patient troubled by Ruminations. Everyday responsibilities and well-being affected",
+        "4": "severe: Patient markedly tormented. Everyday responsibilities and well-being severely affected"
+      },
+      "default_grade": 3
+    },
+    {
+      "id": 24,
+      "title": "Poverty of Thought",
+      "type": "subjective",
+      "description": "The patient has the sense that thinking is unimaginative and restricted to just a few themes. This may or may not be accompanied by unpleasant feelings.",
+      "criteria": "Patient subjectively experiences their thinking as lacking ideas and imagination.",
+      "example": "I don't have any ideas anymore. Nothing new comes into my mind....",
+      "questions": ["Does it seem to you that nothing new is coming into your mind?", "Do you have the feeling that your thinking is less imaginative than it was in the past?"],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "mild: Patient reports occurrences but need not feel impaired",
+        "3": "moderate: Patient reports frequent Poverty of Thought. Possibly suffers or communication slightly impaired",
+        "4": "severe: Patient reports almost constant Poverty of Thought. Patient suffers and/or communication impaired"
+      },
+      "default_grade": 2
+    },
+    {
+      "id": 25,
+      "title": "Inhibited Thinking",
+      "type": "subjective",
+      "description": "The process of thinking is experienced by the patient as being slowed down, braked or inhibited, as if thinking against an internal resistance. Can extend to the point of subjective experience of not being able to think at all anymore.",
+      "criteria": "Patient subjectively experiences their thinking as slowed or inhibited.",
+      "example": "I don't get anywhere with my thinking anymore. My thoughts slow down and sometimes it seems to me as if I don't have any thoughts at all.",
+      "questions": ["Does it seem to you that your thinking is inhibited or slowed down, compared to how it was in the past?"],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "mild: Patient reports occurrences but need not feel impaired",
+        "3": "moderate: Patient reports frequent Inhibited Thinking. Possibly suffers or communication slightly impaired",
+        "4": "severe: Patient reports almost constant Inhibited Thinking. Patient suffers and/or communication impaired"
+      },
+      "default_grade": 2
+    },
+    {
+      "id": 26,
+      "title": "Receptive Speech Dysfunction",
+      "type": "subjective",
+      "description": "The meanings of words, word sequences or sentences can only be grasped or understood incompletely, with effort, or not at all. The patient may have problems with interpersonal communication as a result.",
+      "criteria": "Patient reports difficulty understanding spoken language despite hearing the words.",
+      "example": "Sometimes I feel like I'm not catching the meanings of the words I'm hearing. Someone is speaking to me and I hear the words, but I'm not able to understand the context precisely.",
+      "questions": ["Are you still able to understand conversations with other people in the same way you did in the past?", "Do you have the feeling that you are sometimes unable to understand the meaning of single words or sentences?"],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "mild: Patient reports mild dysfunction that occurred several times but need not feel impaired",
+        "3": "moderate: Patient reports occasional/moderate dysfunction. Possibly suffers or communication slightly impaired",
+        "4": "severe: Patient reports marked dysfunction. Patient suffers and/or communication impaired"
+      },
+      "default_grade": 2
+    },
+    {
+      "id": 27,
+      "title": "Expressive Speech Dysfunction",
+      "type": "subjective",
+      "description": "The patient notices that it is difficult to find the right words. While speaking, notices that word choice, linguistic precision and word fluency are affected. Appropriate words are not quickly accessible or completely unavailable.",
+      "criteria": "Patient subjectively experiences difficulty expressing themselves with appropriate words.",
+      "example": "My speech is at a very basic level. Words and sentences are not as precise and appropriate. I can't find words and it's difficult for me to link them together correctly.",
+      "questions": ["Are you still able to express yourself as skilfully and accurately as you could in the past?", "Do you sometimes have the feeling that you can't express yourself like you want to anymore?"],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "mild: Patient reports mild dysfunction that occurred several times but need not feel impaired",
+        "3": "moderate: Patient reports occasional/moderate dysfunction. Possibly suffers or communication slightly impaired",
+        "4": "severe: Patient reports marked dysfunction. Patient suffers and/or communication impaired"
+      },
+      "default_grade": 2
+    },
+    {
+      "id": 28,
+      "title": "Dysfunction of Thought Initiative and Intentionality",
+      "type": "subjective",
+      "description": "The patient subjectively experiences a lack of thought initiative, 'thought energy' and intentionality. The impairment in initiating or structuring the thought process may result in inability to perform activities of daily living.",
+      "criteria": "Patient lacks the mental energy or initiative to think and engage in conversation.",
+      "example": "I've totally lost the mental power to think. I don't have the strength that is needed for thinking anymore. I'm not able to talk to other people anymore.",
+      "questions": ["Do you sometimes lack the strength or energy to think?", "Do you have the feeling that you've lost the initiative to think and the ability to participate in conversations?"],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "mild: Patient reports mild dysfunction that occurs several times but need not feel impaired",
+        "3": "moderate: Patient reports occasional/moderate dysfunction. Possibly suffers or daily activities slightly impaired",
+        "4": "severe: Patient reports marked dysfunction. Patient suffers and/or daily activities impaired"
+      },
+      "default_grade": 2
+    },
+    {
+      "id": 29,
+      "title": "Thought Interference",
+      "type": "subjective",
+      "description": "Interfering thoughts or ideas that do not belong to the current line of thought. May or may not be triggered by external stimuli. The interfering thoughts are more or less neutral in affective weighting.",
+      "criteria": "Patient reports intrusive thoughts that distract from their current focus.",
+      "example": "I always have to think about other things that distract me. I can't concentrate anymore. If I concentrate on something, other thoughts push their way into my mind.",
+      "questions": ["Are you easily distracted by events happening around you, such as noises?", "Does it sometimes seem like you can't concentrate on conversations because your thoughts keep running astray?"],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "mild: Patient reports several occurrences but need not feel impaired",
+        "3": "moderate: Patient reports occasional Thought Interference. Possibly suffers or communication slightly impaired",
+        "4": "severe: Patient reports frequent Thought Interference. Patient suffers and/or communication impaired"
+      },
+      "default_grade": 2
+    },
+    {
+      "id": 30,
+      "title": "Pressure/Rush of Thoughts",
+      "type": "subjective",
+      "description": "Numerous thoughts with varied content jump into or impose on the patient's mind, alternating rapidly. The patient is unable to control or suppress these appearing and disappearing thoughts.",
+      "criteria": "Patient experiences overwhelming rush of multiple thoughts that cannot be controlled.",
+      "example": "I can't keep my thoughts under control. Sometimes I feel crushed by the variety of my thoughts. Often, different and senseless thoughts come into my mind. The thoughts whirl around and around.",
+      "questions": ["Do you sometimes feel that you can't aim your thoughts in the direction you want them to go?", "Do you sometimes feel that so many ideas come into your mind quickly that you lose control of your thoughts?"],
+      "graduation": {
+        "0": "not present",
+        "1": "doubtful",
+        "2": "mild: Patient reports several occurrences but need not feel impaired",
+        "3": "moderate: Patient reports occasional Pressure/Rush of Thoughts. Possibly suffers or communication slightly impaired",
+        "4": "severe: Patient reports frequent Pressure/Rush of Thoughts. Patient suffers and/or communication impaired"
+      },
+      "default_grade": 2
+    }
+  ]
+}

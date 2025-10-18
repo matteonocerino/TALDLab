@@ -1,0 +1,14 @@
+# Framework web
+streamlit==1.28.0
+
+# Google Gemini API
+google-generativeai==0.3.1
+
+# Gestione variabili d'ambiente
+python-dotenv==1.0.0
+
+# Generazione PDF per report
+reportlab==4.0.7
+
+# Utilità
+python-dateutil==2.8.2
