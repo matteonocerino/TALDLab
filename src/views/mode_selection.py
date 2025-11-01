@@ -224,7 +224,7 @@ def render_mode_selection() -> str | None:
     st.markdown("")
     st.caption("""
     📌 **Progetto di tesi** - Studente: Matteo Nocerino | 
-    Relatore: Prof.ssa Rita Francese | A.A. 2024/2025
+    Relatore: Prof.ssa Rita Francese | A.A. 2025/2026
     """)
     
     return None
