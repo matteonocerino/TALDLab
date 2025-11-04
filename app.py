@@ -114,7 +114,7 @@ def initialize_application():
             # Flag inizializzazione completata
             st.session_state.initialized = True
             
-            st.success("✅ Applicazione inizializzata correttamente!")
+            # st.success("✅ Applicazione inizializzata correttamente!")
             
         except ConfigurationError as e:
             st.error(f"""
