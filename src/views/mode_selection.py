@@ -28,98 +28,9 @@ def render_mode_selection() -> str | None:
         str | None: "guided", "exploratory" o None se nessuna selezione
     """
     
-    st.markdown("""
-    <style>
-    /* 1. VARIABILI E STILI DI BASE PER LIGHT/DARK MODE */
-    body[theme="light"] {
-        --bg-color: #ffffff; --text-color-primary: #2c3e50; --text-color-secondary: #34495e;
-        --card-bg: #ffffff; --card-border: #e6e6e6; --info-box-bg: #e7f3ff; --info-box-border: #007bff;
-    }
-    body[theme="dark"] {
-        --bg-color: #0e1117; --text-color-primary: #fafafa; --text-color-secondary: #adb5bd;
-        --card-bg: #161b22; --card-border: #303d; --info-box-bg: #1c213c; --info-box-border: #3b82f6;
-    }
-    .stApp { background: var(--bg-color) !important; }
-
-    /* 2. LAYOUT PRINCIPALE E SPAZIATURE */
-    .block-container {
-        display: flex;
-        flex-direction: column;
-        min-height: 90vh;
-        padding-top: 2rem !important; 
-    }
-    .app-footer {
-        margin-top: auto;
-        padding-top: 2rem;
-        padding-bottom: 1rem;
-        font-size: 0.9rem;
-        color: var(--text-color-secondary);
-    }
-
-    /* 3. STILI DEI COMPONENTI UI */
-    .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
-    .brand img, .brand .emoji-fallback { height: clamp(56px, 6vw, 96px); width: auto; }
+    # NOTA: Il blocco CSS è stato rimosso e spostato in 'src/views/style.css',
+    # che viene caricato globalmente da 'app.py'.
     
-    .brand-text-container {
-        display: flex;
-        flex-direction: column;
-        gap: 0.15rem;
-    }
-    .brand .brand-title { 
-        font-size: clamp(20px, 2.2vw, 28px); 
-        color: var(--text-color-primary) !important; 
-        font-weight: 700;
-        line-height: 1.2;
-    }
-    .brand .brand-sub { 
-        font-size: clamp(12px, 1.4vw, 14px); 
-        color: var(--text-color-secondary) !important;
-        line-height: 1.2;
-    }
-    
-    hr {
-        margin-top: 1rem !important;
-        margin-bottom: 1rem !important;
-    }
-    
-    h2 {
-        margin-top: 1rem !important;
-    }
-    
-    h1, h3, .card-title, .info-box h4 { color: var(--text-color-primary) !important; }
-    p, li, .card-sub, .info-box p { color: var(--text-color-secondary) !important; }
-
-    .mode-card {
-        background: var(--card-bg) !important; border: 1px solid var(--card-border) !important;
-        border-radius: 10px; padding: 1.2rem; margin-bottom: 1rem; min-height: 260px;
-    }
-    .mode-card.guided { border-left: 6px solid #27ae60 !important; }
-    .mode-card.exploratory { border-left: 6px solid #e67e22 !important; }
-
-    .info-box {
-        background-color: var(--info-box-bg) !important; border-left: 4px solid var(--info-box-border) !important;
-        padding: 1rem; border-radius: 4px; margin-top: 1rem;
-    }
-    
-    /* Stile per i bottoni colorati in base alla colonna */
-    div[data-testid="stButton"] > button {
-        border: none !important; border-radius: 8px !important;
-        font-weight: 600 !important; padding: 0.5rem 1rem !important;
-        color: white !important;
-    }
-    div[data-testid="stButton"] > button:hover {
-        filter: brightness(1.1); color: white !important;
-    }
-    div[data-testid="stHorizontalBlock"] > div:nth-child(1) div[data-testid="stButton"] > button {
-        background-color: #27ae60 !important; /* Verde */
-    }
-    div[data-testid="stHorizontalBlock"] > div:nth-child(2) div[data-testid="stButton"] > button {
-        background-color: #e67e22 !important; /* Arancione */
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    # Prepara e renderizza l'header del brand con logo o emoji
     logo_path = os.path.join("assets", "taldlab_logo.png")
     if os.path.exists(logo_path):
         with open(logo_path, "rb") as f:
@@ -145,7 +56,6 @@ def render_mode_selection() -> str | None:
     
     col1, col2 = st.columns(2, gap="large")
     
-    # Colonna Modalità Guidata
     with col1:
         st.markdown("""
         <div class="mode-card guided">
@@ -163,7 +73,6 @@ def render_mode_selection() -> str | None:
         if st.button("Avvia Modalità Guidata →", use_container_width=True, key="btn_guided"):
             return "guided"
     
-    # Colonna Modalità Esplorativa
     with col2:
         st.markdown("""
         <div class="mode-card exploratory">
@@ -181,7 +90,6 @@ def render_mode_selection() -> str | None:
         if st.button("Avvia Modalità Esplorativa →", use_container_width=True, key="btn_exploratory"):
             return "exploratory"
     
-    # Box informativo e footer
     st.markdown("""
     <div class="info-box">
         <h4>ℹ️ Come funziona il sistema</h4>
@@ -218,12 +126,3 @@ def render_mode_info_sidebar():
         st.markdown("---")
         st.info("**Item TALD:** 30 totali\n\n**Scala graduazione:** 0-4")
         st.warning("Strumento **formativo**, NON per uso clinico-diagnostico.")
-
-
-def reset_to_mode_selection():
-    """Reset completo dell'applicazione alla schermata di selezione modalità."""
-    keys_to_keep = ['initialized', 'tald_items', 'services']
-    keys_to_remove = [key for key in st.session_state.keys() if key not in keys_to_keep]
-    for key in keys_to_remove:
-        del st.session_state[key]
-    st.rerun()

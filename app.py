@@ -39,6 +39,16 @@ from src.views.feedback_form import render_feedback_form
 
 
 # ============================================================================
+# UTILITY PER CARICAMENTO STILE GLOBALE
+# ============================================================================
+
+def load_css(file_path: str):
+    """Carica e inietta un file CSS esterno nell'app Streamlit."""
+    with open(file_path) as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+
+# ============================================================================
 # CONFIGURAZIONE STREAMLIT
 # ============================================================================
 
@@ -114,8 +124,6 @@ def initialize_application():
             # Flag inizializzazione completata
             st.session_state.initialized = True
             
-            # st.success("✅ Applicazione inizializzata correttamente!")
-            
         except ConfigurationError as e:
             st.error(f"""
             ❌ **Errore di configurazione**
@@ -153,12 +161,10 @@ def handle_mode_selection():
     selected_mode = render_mode_selection()
     
     if selected_mode == "guided":
-        # Modalità guidata → passa a selezione item
         st.session_state.session.start_guided_mode()
         st.rerun()
     
     elif selected_mode == "exploratory":
-        # Modalità esplorativa → seleziona item casuale
         random_item = random.choice(st.session_state.tald_items)
         
         st.session_state.session.start_exploratory_mode(
@@ -167,7 +173,6 @@ def handle_mode_selection():
             grade=random_item.default_grade
         )
         
-        # Salva item per uso successivo
         st.session_state.current_item = random_item
         
         st.rerun()
@@ -182,14 +187,12 @@ def handle_item_selection():
     selected_item = render_item_selection(st.session_state.tald_items)
     
     if selected_item:
-        # Item selezionato → configura ground truth e vai a intervista
         st.session_state.session.set_selected_item(
             item_id=selected_item.id,
             item_title=selected_item.title,
             grade=selected_item.default_grade
         )
         
-        # Salva item per uso successivo
         st.session_state.current_item = selected_item
         
         st.rerun()
@@ -204,7 +207,6 @@ def handle_interview():
     current_item = st.session_state.current_item
     ground_truth = st.session_state.session.ground_truth
     
-    # Renderizza chat interface
     terminated = render_chat_interface(
         conversation=st.session_state.conversation,
         conversation_manager=st.session_state.conversation_manager,
@@ -214,7 +216,6 @@ def handle_interview():
     )
     
     if terminated:
-        # Intervista terminata → passa a valutazione
         st.session_state.session.terminate_interview()
         st.rerun()
 
@@ -228,7 +229,6 @@ def handle_evaluation():
     current_item = st.session_state.current_item
     ground_truth = st.session_state.session.ground_truth
     
-    # Renderizza form valutazione
     user_evaluation = render_evaluation_form(
         tald_items=st.session_state.tald_items,
         current_item=current_item,
@@ -237,20 +237,16 @@ def handle_evaluation():
     )
     
     if user_evaluation == "BACK":
-        # Torna all'intervista (riapre chat)
         st.session_state.session.phase = SessionPhase.INTERVIEW
         st.rerun()
     
     elif user_evaluation:
-        # Valutazione confermata → confronta con ground truth
         try:
-            # Confronto automatico (RF_7)
             comparison_result = ComparisonEngine.compare(
                 user_evaluation=user_evaluation,
                 ground_truth=ground_truth
             )
             
-            # Genera report (RF_8)
             report = st.session_state.report_generator.generate_report(
                 ground_truth=ground_truth,
                 user_evaluation=user_evaluation,
@@ -259,7 +255,6 @@ def handle_evaluation():
                 tald_item=current_item
             )
             
-            # Salva in session state
             st.session_state.session.submit_evaluation(user_evaluation, comparison_result)
             st.session_state.report = report
             
@@ -281,20 +276,16 @@ def handle_report():
     """
     report = st.session_state.report
     
-    # Renderizza report view
     action = render_report_view(report)
     
     if action == "download_pdf":
-        # Download PDF (RF_9)
         handle_pdf_download(report)
     
     elif action == "new_simulation":
-        # Nuova simulazione → reset e torna a selection
         reset_application()
         st.rerun()
     
     elif action == "feedback":
-        # Vai a feedback form
         st.session_state.show_feedback = True
         st.rerun()
 
@@ -307,7 +298,6 @@ def handle_feedback():
     """
     report = st.session_state.report
     
-    # Renderizza feedback form
     completed = render_feedback_form(
         item_id=report.tald_item.id,
         item_title=report.tald_item.title,
@@ -316,7 +306,6 @@ def handle_feedback():
     )
     
     if completed:
-        # Feedback completato o saltato → nuova simulazione
         st.balloons()
         st.success("🎉 Grazie per aver usato TALDLab!")
         
@@ -337,7 +326,6 @@ def reset_application():
     
     Pulisce session_state mantenendo solo configurazioni caricate.
     """
-    # Mantieni solo configurazioni persistenti
     keys_to_keep = [
         'initialized',
         'config',
@@ -347,14 +335,12 @@ def reset_application():
         'report_generator'
     ]
     
-    # Rimuovi tutto tranne le chiavi da mantenere
     keys_to_remove = [key for key in st.session_state.keys() 
                       if key not in keys_to_keep]
     
     for key in keys_to_remove:
         del st.session_state[key]
     
-    # Reinizializza session e conversation
     st.session_state.session = SessionState()
     st.session_state.conversation = ConversationHistory()
 
@@ -373,7 +359,6 @@ def render_error_page(error_message: str):
     """)
     
     if st.button("🔄 Riavvia Applicazione"):
-        # Clear tutto e riavvia
         for key in list(st.session_state.keys()):
             del st.session_state[key]
         st.rerun()
@@ -393,6 +378,9 @@ def main():
     # Configura Streamlit
     configure_streamlit()
     
+    # Carica il foglio di stile globale dell'applicazione
+    load_css("src/views/style.css")
+    
     # Inizializza applicazione (solo prima volta)
     initialize_application()
     
@@ -401,38 +389,29 @@ def main():
         session = st.session_state.session
         
         if session.is_in_selection():
-            # FASE 1: Selezione modalità
             handle_mode_selection()
         
         elif session.is_in_item_selection():
-            # FASE 2: Selezione item (solo modalità guidata)
             handle_item_selection()
         
         elif session.is_in_interview():
-            # FASE 3: Intervista con paziente virtuale
             handle_interview()
         
         elif session.is_in_evaluation():
-            # FASE 4: Valutazione finale
             handle_evaluation()
         
         elif session.is_in_report():
-            # FASE 5: Visualizzazione report
             if st.session_state.get('show_feedback', False):
-                # FASE 6 (opzionale): Feedback
                 handle_feedback()
             else:
                 handle_report()
         
         else:
-            # Fase non riconosciuta
             render_error_page(f"Fase non valida: {session.phase}")
     
     except Exception as e:
-        # Catch-all per errori imprevisti
         render_error_page(f"Errore imprevisto: {str(e)}")
         
-        # Debug info (solo per sviluppo)
         with st.expander("🔧 Debug Info"):
             st.write("Session State:", st.session_state.session.to_dict())
             st.exception(e)
