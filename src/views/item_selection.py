@@ -10,342 +10,198 @@ Implementa RF_2 del RAD (modalità guidata) e mockup UI_2
 
 import streamlit as st
 from typing import Optional, List
-
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent.parent))
+import base64
+import os
 
 from src.models.tald_item import TALDItem
 
 
 def render_item_selection(tald_items: List[TALDItem]) -> Optional[TALDItem]:
     """
-    Renderizza l'interfaccia di selezione item TALD.
+    Renderizza l'interfaccia di selezione item TALD per la Modalità Guidata.
     
-    Implementa RF_2 (modalità guidata): gestione item TALD.
-    Mostra elenco completo dei 30 item con descrizioni.
+    Mostra l'elenco completo dei 30 item con filtri e un flusso di conferma.
     
     Args:
-        tald_items (List[TALDItem]): Lista completa degli item TALD
+        tald_items (List[TALDItem]): Lista completa degli oggetti TALDItem.
         
     Returns:
-        TALDItem | None: Item selezionato o None se nessuna selezione
-        
-    Example:
-        >>> selected = render_item_selection(items)
-        >>> if selected:
-        ...     # Avvia intervista con questo item
+        TALDItem: L'item TALD selezionato e confermato dall'utente.
+        "reset": Se l'utente ha cliccato per tornare alla selezione modalità.
+        None: Se nessuna azione è stata completata.
     """
     
-    # Header con logo
-    _render_header()
+    # NOTA: Lo stile di questa pagina è definito nel file globale 'src/views/style.css'.
     
-    # Breadcrumb
-    st.markdown("🎯 **Modalità Guidata** › Selezione Item")
+    render_item_selection_sidebar(tald_items)
+
+    if _render_back_button_sidebar():
+        return "reset"
+
+    logo_path = os.path.join("assets", "taldlab_logo.png")
+    if os.path.exists(logo_path):
+        with open(logo_path, "rb") as f:
+            b64_logo = base64.b64encode(f.read()).decode("utf-8")
+        logo_element_html = f'<img src="data:image/png;base64,{b64_logo}" alt="TALDLab logo" />'
+    else:
+        logo_element_html = '<div class="emoji-fallback">🧠</div>'
+
+    st.markdown(f"""
+    <div class="brand">
+        {logo_element_html}
+        <div class="brand-text-container">
+            <div class="brand-title">TALDLab</div>
+            <div class="brand-sub">Selezione Item TALD</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown('<p class="breadcrumb">🎯 <strong>Modalità Guidata</strong> › Selezione Item</p>', unsafe_allow_html=True)
     st.markdown("---")
     
-    # Titolo e istruzioni
+    if 'pending_item_selection' in st.session_state:
+        selected_item = st.session_state['pending_item_selection']
+        return _show_item_confirmation(selected_item)
+
     st.markdown("## 📚 Seleziona l'Item TALD da Esercitare")
-    st.markdown("""
-    Scegli quale disturbo del pensiero e del linguaggio vuoi studiare. 
-    Puoi filtrare per tipo (oggettivo/soggettivo) o cercare per nome.
-    """)
+    st.markdown("Scegli quale disturbo del pensiero e del linguaggio vuoi studiare. Puoi filtrare per tipo o cercare per nome.")
     
-    st.markdown("")  # Spacing
-    
-    # Filtri e ricerca
-    col1, col2, col3 = st.columns([2, 2, 1])
-    
+    col1, col2 = st.columns([4, 1])
     with col1:
-        search_term = st.text_input(
-            "🔍 Cerca per nome",
-            placeholder="es. Circumstantiality, Derailment...",
-            label_visibility="collapsed"
-        )
-    
+        search_term = st.text_input("Cerca per nome o descrizione...", placeholder="es. Derailment...", label_visibility="collapsed")
     with col2:
-        filter_type = st.selectbox(
-            "Filtra per tipo",
-            options=["Tutti", "Oggettivi", "Soggettivi"],
-            label_visibility="collapsed"
-        )
+        filter_type = st.selectbox("Filtra per tipo", ["Tutti", "Oggettivi", "Soggettivi"], label_visibility="collapsed")
     
-    with col3:
-        st.markdown("<div style='margin-top: 8px;'></div>", unsafe_allow_html=True)
-        if st.button("🔄 Reset", use_container_width=True):
-            st.rerun()
-    
-    # Filtra items
     filtered_items = _filter_items(tald_items, search_term, filter_type)
-    
-    # Mostra conteggio risultati
-    st.caption(f"Mostrando {len(filtered_items)} di {len(tald_items)} item")
-    
-    st.markdown("")  # Spacing
-    
-    # Lista items
+    st.caption(f"Mostrando {len(filtered_items)} di {len(tald_items)} item.")
+
     if not filtered_items:
         st.warning("Nessun item trovato con i filtri selezionati.")
         return None
     
-    # Separa per tipo
     objective_items = [item for item in filtered_items if item.is_objective()]
     subjective_items = [item for item in filtered_items if item.is_subjective()]
     
-    # Mostra items oggettivi
     if objective_items:
-        st.markdown("### 👁️ Fenomeni Oggettivi (osservabili)")
-        st.caption(f"{len(objective_items)} item disponibili")
-        
-        selected_objective = _render_item_list(objective_items, "objective")
-        if selected_objective:
-            return selected_objective
+        st.markdown('<h3 class="section-title">👁️ Fenomeni Oggettivi (osservabili)</h3>', unsafe_allow_html=True)
+        if _render_item_list(objective_items, "objective"):
+            st.rerun() 
     
-    # Mostra items soggettivi
     if subjective_items:
-        st.markdown("### 💭 Fenomeni Soggettivi (riportati)")
-        st.caption(f"{len(subjective_items)} item disponibili")
-        
-        selected_subjective = _render_item_list(subjective_items, "subjective")
-        if selected_subjective:
-            return selected_subjective
-    
+        st.markdown('<h3 class="section-title">💭 Fenomeni Soggettivi (riportati)</h3>', unsafe_allow_html=True)
+        if _render_item_list(subjective_items, "subjective"):
+            st.rerun()
+            
     return None
 
 
-def _render_header():
-    """Renderizza header con logo."""
-    header_col1, header_col2 = st.columns([1, 11])
-    
-    with header_col1:
-        try:
-            st.image("assets/taldlab_logo.png", width=60)
-        except:
-            st.markdown("<div style='font-size: 3rem;'>🧠</div>", unsafe_allow_html=True)
-    
-    with header_col2:
-        st.markdown("""
-        <div style="margin-top: 5px;">
-            <h2 style="margin: 0; color: #2c3e50;">TALDLab</h2>
-            <p style="color: #7f8c8d; margin: 0; font-size: 0.9rem;">Selezione Item TALD</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("")
-
-
-def _filter_items(
-    items: List[TALDItem], 
-    search_term: str, 
-    filter_type: str
-) -> List[TALDItem]:
-    """
-    Filtra gli item in base a ricerca e tipo.
-    
-    Args:
-        items (List[TALDItem]): Lista completa
-        search_term (str): Termine di ricerca
-        filter_type (str): "Tutti", "Oggettivi", "Soggettivi"
-        
-    Returns:
-        List[TALDItem]: Items filtrati
-    """
-    filtered = items.copy()
-    
-    # Filtro per tipo
+def _filter_items(items: List[TALDItem], search_term: str, filter_type: str) -> List[TALDItem]:
+    """Filtra la lista degli item TALD in base ai criteri di ricerca."""
+    filtered = items
     if filter_type == "Oggettivi":
-        filtered = [item for item in filtered if item.is_objective()]
+        filtered = [item for item in items if item.is_objective()]
     elif filter_type == "Soggettivi":
-        filtered = [item for item in filtered if item.is_subjective()]
-    
-    # Filtro per ricerca
+        filtered = [item for item in items if item.is_subjective()]
     if search_term:
         search_lower = search_term.lower()
-        filtered = [
-            item for item in filtered 
-            if search_lower in item.title.lower() or 
-               search_lower in item.description.lower()
-        ]
-    
-    # Ordina per ID
-    filtered.sort(key=lambda x: x.id)
-    
-    return filtered
+        filtered = [item for item in filtered if search_lower in item.title.lower() or search_lower in item.description.lower()]
+    return sorted(filtered, key=lambda x: x.id)
 
 
-def _render_item_list(items: List[TALDItem], item_type: str) -> Optional[TALDItem]:
-    """
-    Renderizza lista di item con expander per dettagli.
-    
-    Args:
-        items (List[TALDItem]): Items da mostrare
-        item_type (str): "objective" o "subjective" (per key unici)
-        
-    Returns:
-        TALDItem | None: Item selezionato o None
-    """
+def _render_item_list(items: List[TALDItem], key_prefix: str) -> bool:
+    """Renderizza una lista di item, restituendo True se uno viene selezionato."""
     for item in items:
-        # Container per ogni item
         with st.container():
-            col1, col2 = st.columns([10, 2])
-            
+            st.markdown('<div class="item-container">', unsafe_allow_html=True)
+            col1, col2 = st.columns([4, 1])
             with col1:
-                # Titolo item
                 st.markdown(f"**{item.id}. {item.title}**")
-                
-                # Descrizione breve (primo pezzo)
-                short_desc = item.description[:120] + "..." if len(item.description) > 120 else item.description
+                short_desc = (item.description[:120] + "...") if len(item.description) > 120 else item.description
                 st.caption(short_desc)
-            
             with col2:
-                # Pulsante selezione
-                if st.button(
-                    "Seleziona",
-                    key=f"select_{item_type}_{item.id}",
-                    use_container_width=True,
-                    type="primary"
-                ):
-                    # Mostra dettagli e conferma
-                    return _show_item_confirmation(item)
+                if st.button("Seleziona", key=f"select_{key_prefix}_{item.id}", use_container_width=True):
+                    st.session_state['pending_item_selection'] = item
+                    return True
             
-            # Expander per dettagli completi
-            with st.expander(f"📖 Dettagli {item.title}"):
+            with st.expander("📖 Dettagli completi"):
                 _render_item_details(item)
-            
-            st.markdown("")  # Spacing tra item
-    
-    return None
+            st.markdown('</div>', unsafe_allow_html=True)
+    return False
 
 
 def _render_item_details(item: TALDItem):
-    """
-    Renderizza i dettagli completi di un item.
-    
-    Args:
-        item (TALDItem): Item da visualizzare
-    """
-    # Tipo
+    """Renderizza i dettagli di un singolo item TALD, inclusa la sua scala di graduazione formattata."""
+    st.markdown("<div style='margin-top: 0.5rem;'></div>", unsafe_allow_html=True)
     type_label = "Oggettivo (osservabile)" if item.is_objective() else "Soggettivo (riportato)"
     st.markdown(f"**Tipo:** {type_label}")
-    
-    # Descrizione completa
     st.markdown("**Descrizione clinica:**")
-    st.markdown(item.description)
-    
-    # Criteri diagnostici
+    st.markdown(f"*{item.description}*")
     st.markdown("**Criteri diagnostici:**")
-    st.markdown(item.criteria)
-    
-    # Esempio
+    st.markdown(f"*{item.criteria}*")
     if item.example:
         st.markdown("**Esempio tipico:**")
         st.info(item.example)
     
-    # Scala graduazione
-    st.markdown("**Scala di graduazione (0-4):**")
-    for grade in range(5):
-        grade_desc = item.get_grade_description(grade)
-        st.markdown(f"- **{grade}**: {grade_desc}")
+    st.markdown("**Scala di Graduazione Specifica:**")
+    
+    graduation_lines = []
+    grades = sorted(item.graduation.items(), key=lambda x: int(x[0]))
+    
+    for key, value in grades:
+        parts = value.split(':', 1)
+        if len(parts) == 2:
+            level_name = parts[0].strip().capitalize()
+            description = parts[1].strip()
+            line = f"- {key} = **{level_name}**: *{description}*"
+            graduation_lines.append(line)
+        else:
+            line = f"- {key} = **{value.strip().capitalize()}**"
+            graduation_lines.append(line)
+
+    full_graduation_text = "  \n".join(graduation_lines)
+    st.markdown(full_graduation_text)
 
 
-def _show_item_confirmation(item: TALDItem) -> TALDItem:
-    """
-    Mostra dialog di conferma selezione item.
+def _show_item_confirmation(item: TALDItem) -> Optional[TALDItem]:
+    """Mostra un banner di conferma e i pulsanti per iniziare o annullare."""
+    st.markdown("## Convalida la tua scelta")
+    st.success(f"✅ **Item Selezionato:** {item.id}. {item.title}")
     
-    Args:
-        item (TALDItem): Item selezionato
-        
-    Returns:
-        TALDItem: Item confermato
-    """
-    # Salva in session_state temporaneo per conferma
-    st.session_state['pending_item_selection'] = item
-    
-    # Mostra modal di conferma
+    with st.expander("Rivedi i dettagli dell'item selezionato", expanded=True):
+        _render_item_details(item)
+
     st.markdown("---")
-    st.success(f"✅ Hai selezionato: **{item.id}. {item.title}**")
     
-    col1, col2 = st.columns([8, 4])
-    
+    col1, col2 = st.columns(2)
     with col1:
-        st.markdown("**Riepilogo:**")
-        st.markdown(f"- **Tipo:** {'Oggettivo' if item.is_objective() else 'Soggettivo'}")
-        st.markdown(f"- **Grado predefinito simulazione:** {item.default_grade}/4")
-        st.caption(item.description[:150] + "...")
-    
-    with col2:
-        st.markdown("")  # Spacing
-        if st.button(
-            "▶️ Inizia Intervista",
-            use_container_width=True,
-            type="primary",
-            key="confirm_start"
-        ):
-            return item
-        
-        if st.button(
-            "← Cambia Item",
-            use_container_width=True,
-            key="cancel_selection"
-        ):
-            if 'pending_item_selection' in st.session_state:
-                del st.session_state['pending_item_selection']
+        if st.button("← Annulla e scegli un altro item", use_container_width=True, key="cancel_selection"):
+            del st.session_state['pending_item_selection']
             st.rerun()
+
+    with col2:
+        if st.button("▶️ Conferma e Inizia Intervista", use_container_width=True, key="confirm_start"):
+            del st.session_state['pending_item_selection']
+            return item
     
     return None
 
 
 def render_item_selection_sidebar(tald_items: List[TALDItem]):
-    """
-    Renderizza informazioni nella sidebar durante selezione item.
-    
-    Args:
-        tald_items (List[TALDItem]): Lista completa item
-    """
+    """Renderizza informazioni nella sidebar durante selezione item."""
     with st.sidebar:
         st.markdown("## 📊 Statistiche Item")
-        
         objective_count = len([i for i in tald_items if i.is_objective()])
         subjective_count = len([i for i in tald_items if i.is_subjective()])
         
         col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Oggettivi", objective_count)
-        with col2:
-            st.metric("Soggettivi", subjective_count)
-        
-        st.markdown("---")
-        
-        st.markdown("## ℹ️ Scala TALD")
-        st.info("""
-        **Graduazione 0-4:**
-        - 0: Non presente
-        - 1: Dubbio
-        - 2: Lieve (mild)
-        - 3: Moderato (moderate)
-        - 4: Severo (severe)
-        
-        *Ogni item ha descrizioni specifiche per i gradi*
-        """)
-        
-        st.markdown("---")
-        
-        st.markdown("## 💡 Suggerimenti")
-        st.markdown("""
-        - Leggi i **dettagli** prima di selezionare
-        - Nota il **tipo** (oggettivo/soggettivo)
-        - Consulta gli **esempi** tipici
-        """)
+        with col1: st.metric("Oggettivi", objective_count)
+        with col2: st.metric("Soggettivi", subjective_count)
 
 
-def show_cancel_selection_dialog():
-    """
-    Mostra dialog per annullare la selezione e tornare a scelta modalità.
-    """
-    if st.sidebar.button("← Torna a Selezione Modalità", use_container_width=True):
-        # Reset a mode selection
+def _render_back_button_sidebar() -> bool:
+    """Mostra un pulsante per tornare alla selezione della modalità e restituisce True se cliccato."""
+    if st.sidebar.button("← Torna a Selezione Modalità"):
         if 'pending_item_selection' in st.session_state:
             del st.session_state['pending_item_selection']
-        
-        from src.views.mode_selection import reset_to_mode_selection
-        reset_to_mode_selection()
+        return True
+    return False

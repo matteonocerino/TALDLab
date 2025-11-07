@@ -2,25 +2,24 @@
 /* TALDLab - Foglio di Stile Globale       */
 /* ======================================= */
 
-/* 1. VARIABILI E STILI DI BASE PER LIGHT/DARK MODE */
+/* 1. VARIABILI E STILI DI BASE */
 body[theme="light"] {
     --bg-color: #ffffff;
     --text-color-primary: #2c3e50;
     --text-color-secondary: #34495e;
     --card-bg: #fdfdfd;
     --card-border: #e0e0e0;
+    --primary-color: #007bff;
     --info-box-bg: #e7f3ff;
-    --info-box-border: #007bff;
 }
-
 body[theme="dark"] {
     --bg-color: #0e1117;
     --text-color-primary: #fafafa;
     --text-color-secondary: #adb5bd;
     --card-bg: #1a1a1a;
     --card-border: #333333;
+    --primary-color: #3b82f6;
     --info-box-bg: #1c213c;
-    --info-box-border: #3b82f6;
 }
 
 .stApp {
@@ -29,12 +28,9 @@ body[theme="dark"] {
 
 /* 2. LAYOUT PRINCIPALE E SPAZIATURE */
 .block-container {
-    display: flex;
-    flex-direction: column;
-    min-height: 90vh;
     padding-top: 2rem !important;
+    padding-bottom: 2rem !important; 
 }
-
 .app-footer {
     margin-top: auto;
     padding-top: 2rem;
@@ -49,27 +45,23 @@ body[theme="dark"] {
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-bottom: 6px;
+    margin-bottom: 1rem !important;
 }
-
 .brand img, .brand .emoji-fallback {
     height: clamp(56px, 6vw, 96px);
     width: auto;
 }
-
 .brand-text-container {
     display: flex;
     flex-direction: column;
     gap: 0.15rem;
 }
-
 .brand .brand-title {
     font-size: clamp(20px, 2.2vw, 28px);
     color: var(--text-color-primary) !important;
     font-weight: 700;
     line-height: 1.2;
 }
-
 .brand .brand-sub {
     font-size: clamp(12px, 1.4vw, 14px);
     color: var(--text-color-secondary) !important;
@@ -77,31 +69,88 @@ body[theme="dark"] {
 }
 
 hr {
-    margin-top: 1rem !important;
-    margin-bottom: 1rem !important;
+    margin-top: 0 !important;
+    margin-bottom: 1.5rem !important;
 }
-
-h2 {
-    margin-top: 1rem !important;
-}
-
-h1, h3, .card-title, .info-box h4 {
+h1, h2, h3, .card-title {
     color: var(--text-color-primary) !important;
 }
-
-p, li, .card-sub, .info-box p {
+p, li, .card-sub {
     color: var(--text-color-secondary) !important;
 }
 
 .info-box {
     background-color: var(--info-box-bg) !important;
-    border-left: 4px solid var(--info-box-border) !important;
+    border-left: 4px solid var(--primary-color) !important;
     padding: 1rem;
     border-radius: 4px;
     margin-top: 1rem;
 }
 
-/* 4. STILI SPECIFICI PER LA SELEZIONE DELLA MODALITÀ */
+/* ======================================= */
+/* 4. BOTTONI                              */
+/* ======================================= */
+
+/* Base */
+div[data-testid="stButton"] > button {
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    padding: 0.5rem 1rem !important;
+    transition: all 0.2s ease-in-out;
+}
+div[data-testid="stButton"] > button p {
+    font-weight: 600 !important;
+    color: inherit !important;
+}
+
+/* ============================= */
+/* VIEW: MODE SELECTION          */
+/* ============================= */
+
+/* Modalità Guidata (verde) */
+section.main div[data-testid="stHorizontalBlock"]:has(.mode-card.guided)
+    > div:nth-child(1) div[data-testid="stButton"] > button {
+    background-color: #27ae60 !important;
+    border-color: #27ae60 !important;
+    color: white !important;
+}
+
+section.main div[data-testid="stHorizontalBlock"]:has(.mode-card.guided)
+    > div:nth-child(1) div[data-testid="stButton"] > button:hover {
+    filter: brightness(1.1);
+}
+
+/* Modalità Esplorativa (arancione) */
+section.main div[data-testid="stHorizontalBlock"]:has(.mode-card.exploratory)
+    > div:nth-child(2) div[data-testid="stButton"] > button {
+    background-color: #e67e22 !important;
+    border-color: #e67e22 !important;
+    color: white !important;
+}
+
+section.main div[data-testid="stHorizontalBlock"]:has(.mode-card.exploratory)
+    > div:nth-child(2) div[data-testid="stButton"] > button:hover {
+    filter: brightness(1.1);
+}
+
+/* ============================= */
+/* VIEW: ITEM SELECTION          */
+/* ============================= */
+
+/* Pulsanti "Seleziona" e "Conferma" (stessa struttura nel layout) */
+div[data-testid="stVerticalBlock"] > div > div:nth-child(2) div[data-testid="stButton"] > button {
+    background-color: #27ae60 !important;
+    border-color: #27ae60 !important;
+    color: white !important;
+}
+div[data-testid="stVerticalBlock"] > div > div:nth-child(2) div[data-testid="stButton"] > button:hover {
+    background-color: #2ecc71 !important;
+    border-color: #2ecc71 !important;
+}
+
+/* ======================================= */
+/* 5. STILI SPECIFICI PER VIEW             */
+/* ======================================= */
 .mode-card {
     background: var(--card-bg) !important;
     border: 1px solid var(--card-border) !important;
@@ -109,38 +158,22 @@ p, li, .card-sub, .info-box p {
     padding: 1.2rem;
     margin-bottom: 1rem;
     min-height: 260px;
-    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
 }
-
 .mode-card.guided {
-    border-left: 6px solid #27ae60 !important; /* Verde */
+    border-left: 6px solid #27ae60 !important;
 }
-
 .mode-card.exploratory {
-    border-left: 6px solid #e67e22 !important; /* Arancione */
+    border-left: 6px solid #e67e22 !important;
 }
-
-/* Stile per i bottoni colorati nella pagina di selezione */
-div[data-testid="stButton"] > button {
-    border: none !important;
-    border-radius: 8px !important;
-    font-weight: 600 !important;
-    padding: 0.5rem 1rem !important;
-    color: white !important;
-    transition: filter 0.2s;
+.item-container {
+    border-bottom: 1px solid var(--card-border);
+    padding: 1rem 0;
 }
-
-div[data-testid="stButton"] > button:hover {
-    filter: brightness(1.1);
-    color: white !important;
+.breadcrumb {
+    margin-top: -0.4rem !important;
+    margin-bottom: 0 !important;
+    padding-bottom: 0.25rem;
 }
-
-/* Colora il bottone nella prima colonna (Guidata) */
-div[data-testid="stHorizontalBlock"] > div:nth-child(1) div[data-testid="stButton"] > button {
-    background-color: #27ae60 !important; /* Verde */
-}
-
-/* Colora il bottone nella seconda colonna (Esplorativa) */
-div[data-testid="stHorizontalBlock"] > div:nth-child(2) div[data-testid="stButton"] > button {
-    background-color: #e67e22 !important; /* Arancione */
+.section-title {
+    margin-top: 2.5rem !important;
 }

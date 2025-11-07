@@ -184,9 +184,17 @@ def handle_item_selection():
     
     Implementa RF_2: gestione item TALD.
     """
-    selected_item = render_item_selection(st.session_state.tald_items)
+    # La funzione render_item_selection ora può restituire l'item, "reset" o None
+    selected_item_or_action = render_item_selection(st.session_state.tald_items)
     
-    if selected_item:
+    # Caso 1: L'utente ha cliccato "Torna a Selezione Modalità"
+    if selected_item_or_action == "reset":
+        reset_application()
+        st.rerun()
+
+    # Caso 2: L'utente ha selezionato e confermato un item
+    elif selected_item_or_action:
+        selected_item = selected_item_or_action
         st.session_state.session.set_selected_item(
             item_id=selected_item.id,
             item_title=selected_item.title,
@@ -196,6 +204,9 @@ def handle_item_selection():
         st.session_state.current_item = selected_item
         
         st.rerun()
+
+    # Caso 3: Nessuna azione completata, la view continua a essere renderizzata
+    # (non c'è bisogno di un 'else', la funzione termina e Streamlit continua)
 
 
 def handle_interview():
