@@ -20,7 +20,7 @@ Studente: Matteo Nocerino - Matricola 0512117269
 
 Relatore: Prof.ssa Rita Francese  
 
-Anno Accademico 2025/2026
+Anno Accademico 2024/2025
 
 
 

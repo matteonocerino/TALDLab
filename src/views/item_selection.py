@@ -131,7 +131,6 @@ def _render_item_list(items: List[TALDItem], key_prefix: str) -> bool:
 
 def _render_item_details(item: TALDItem):
     """Renderizza i dettagli di un singolo item TALD, inclusa la sua scala di graduazione formattata."""
-    st.markdown("<div style='margin-top: 0.5rem;'></div>", unsafe_allow_html=True)
     type_label = "Oggettivo (osservabile)" if item.is_objective() else "Soggettivo (riportato)"
     st.markdown(f"**Tipo:** {type_label}")
     st.markdown("**Descrizione clinica:**")

@@ -12,11 +12,8 @@ Control del pattern Entity-Control-Boundary (vedi RAD sezione 2.6.1)
 Implementa RF_7 del RAD
 """
 
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent))
-
-from models.evaluation import UserEvaluation, GroundTruth, EvaluationResult
+from typing import Optional, Dict
+from ..models.evaluation import UserEvaluation, GroundTruth, EvaluationResult
 
 
 class ComparisonEngine:
@@ -44,11 +41,16 @@ class ComparisonEngine:
         >>> print(f"Grado corretto: {result.grade_correct}")
     """
     
-    # Pesi per il calcolo del punteggio
+    # Pesi per il calcolo del punteggio (configurabili come costanti)
     SCORE_ITEM_CORRECT = 50      # 50 punti per item corretto (esplorativa)
     SCORE_GRADE_EXACT = 50       # 50 punti per grado esatto
     SCORE_GRADE_CLOSE = 25       # 25 punti per grado vicino (±1)
-    
+
+    # Limiti e parametri
+    MAX_GRADE = 4
+    MIN_GRADE = 0
+    MAX_FEEDBACK_LENGTH = 2000
+
     @staticmethod
     def compare(
         user_evaluation: UserEvaluation,
@@ -74,27 +76,34 @@ class ComparisonEngine:
             >>> print(result.grade_correct)  # False (3 vs 2)
             >>> print(result.score)  # 25 (grado vicino di 1)
         """
+        # Validazioni basiche per robustezza
+        if not (ComparisonEngine.MIN_GRADE <= user_evaluation.grade <= ComparisonEngine.MAX_GRADE):
+            raise ValueError(f"User grade fuori range: {user_evaluation.grade}")
+        if not (ComparisonEngine.MIN_GRADE <= ground_truth.grade <= ComparisonEngine.MAX_GRADE):
+            raise ValueError(f"Ground truth grade fuori range: {ground_truth.grade}")
+
         # 1. Verifica correttezza item (solo modalità esplorativa)
-        item_correct = None
+        item_correct: Optional[bool] = None
         if ground_truth.is_exploratory_mode():
+            # Se user_evaluation.item_id è None, è automaticamente incorretto
             item_correct = (user_evaluation.item_id == ground_truth.item_id)
-        
+
         # 2. Verifica correttezza grado
-        grade_correct = (user_evaluation.grade == ground_truth.grade)
-        
+        grade_correct: bool = (user_evaluation.grade == ground_truth.grade)
+
         # 3. Calcola differenza grado
-        grade_difference = abs(user_evaluation.grade - ground_truth.grade)
-        
+        grade_difference: int = abs(user_evaluation.grade - ground_truth.grade)
+
         # 4. Calcola punteggio
-        score = ComparisonEngine._calculate_score(
+        score: int = ComparisonEngine._calculate_score(
             item_correct=item_correct,
             grade_correct=grade_correct,
             grade_difference=grade_difference,
             mode=ground_truth.mode
         )
-        
+
         # 5. Genera messaggio feedback
-        feedback_message = ComparisonEngine._generate_feedback_message(
+        feedback_message: str = ComparisonEngine._generate_feedback_message(
             item_correct=item_correct,
             grade_correct=grade_correct,
             grade_difference=grade_difference,
@@ -102,8 +111,12 @@ class ComparisonEngine:
             ground_truth_grade=ground_truth.grade,
             mode=ground_truth.mode
         )
-        
-        # 6. Crea oggetto EvaluationResult
+
+        # 6. Troncamento feedback se troppo lungo (protezione per UI/PDF)
+        if len(feedback_message) > ComparisonEngine.MAX_FEEDBACK_LENGTH:
+            feedback_message = feedback_message[:ComparisonEngine.MAX_FEEDBACK_LENGTH]
+
+        # 7. Crea oggetto EvaluationResult
         return EvaluationResult(
             item_correct=item_correct,
             grade_correct=grade_correct,
@@ -114,7 +127,7 @@ class ComparisonEngine:
     
     @staticmethod
     def _calculate_score(
-        item_correct: bool | None,
+        item_correct: Optional[bool],
         grade_correct: bool,
         grade_difference: int,
         mode: str
@@ -154,12 +167,11 @@ class ComparisonEngine:
                 score = 50
             else:  # differenza >= 2
                 score = 0
-        
         else:  # exploratory
             # Punteggio item (50 punti)
             if item_correct:
                 score += ComparisonEngine.SCORE_ITEM_CORRECT
-            
+
             # Punteggio grado (50 punti)
             if grade_correct:
                 score += ComparisonEngine.SCORE_GRADE_EXACT
@@ -167,11 +179,12 @@ class ComparisonEngine:
                 score += ComparisonEngine.SCORE_GRADE_CLOSE
             # Se differenza >= 2, nessun punto per il grado
         
-        return score
+        # Garantire 0 <= score <= 100
+        return max(0, min(100, int(score)))
     
     @staticmethod
     def _generate_feedback_message(
-        item_correct: bool | None,
+        item_correct: Optional[bool],
         grade_correct: bool,
         grade_difference: int,
         user_grade: int,
@@ -199,6 +212,7 @@ class ComparisonEngine:
             if item_correct:
                 messages.append("Hai identificato correttamente l'item TALD.")
             else:
+                # se item_correct è None (improbabile in exploratory), segnaliamo genericamente
                 messages.append("L'item identificato non è corretto.")
         
         # Feedback grado
@@ -269,7 +283,7 @@ class ComparisonEngine:
         user_evaluation: UserEvaluation,
         ground_truth: GroundTruth,
         result: EvaluationResult
-    ) -> dict:
+    ) -> Dict:
         """
         Genera un'analisi dettagliata del confronto.
         
@@ -293,7 +307,7 @@ class ComparisonEngine:
             "user_evaluation": {
                 "item_id": user_evaluation.item_id,
                 "grade": user_evaluation.grade,
-                "has_notes": len(user_evaluation.notes) > 0
+                "has_notes": bool(user_evaluation.notes and user_evaluation.notes.strip())
             },
             "comparison": {
                 "item_correct": result.item_correct,

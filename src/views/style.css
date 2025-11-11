@@ -2,14 +2,13 @@
 /* TALDLab - Foglio di Stile Globale       */
 /* ======================================= */
 
-/* 1. VARIABILI E STILI DI BASE */
+/* 1. VARIABILI GLOBALI E TEMA */
 body[theme="light"] {
     --bg-color: #ffffff;
     --text-color-primary: #2c3e50;
     --text-color-secondary: #34495e;
     --card-bg: #fdfdfd;
     --card-border: #e0e0e0;
-    --primary-color: #007bff;
     --info-box-bg: #e7f3ff;
 }
 body[theme="dark"] {
@@ -18,20 +17,28 @@ body[theme="dark"] {
     --text-color-secondary: #adb5bd;
     --card-bg: #1a1a1a;
     --card-border: #333333;
-    --primary-color: #3b82f6;
     --info-box-bg: #1c213c;
 }
 
+/* 2. LAYOUT PRINCIPALE */
 .stApp {
     background: var(--bg-color) !important;
 }
 
-/* 2. LAYOUT PRINCIPALE E SPAZIATURE */
-.block-container {
-    padding-top: 2rem !important;
-    padding-bottom: 2rem !important; 
+[data-testid="stAppViewContainer"] > section.main {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
 }
+
+.block-container {
+    flex-grow: 1;
+    padding-top: 2rem !important;
+    padding-bottom: 2rem !important;
+}
+
 .app-footer {
+    flex-shrink: 0;
     margin-top: auto;
     padding-top: 2rem;
     padding-bottom: 1rem;
@@ -40,15 +47,16 @@ body[theme="dark"] {
     text-align: center;
 }
 
-/* 3. STILI DEI COMPONENTI UI CONDIVISI */
+/* 3. HEADER E BRANDING */
 .brand {
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-bottom: 1rem !important;
+    padding-top: 0.5rem !important;
+    margin-bottom: 0.25rem !important;
 }
 .brand img, .brand .emoji-fallback {
-    height: clamp(56px, 6vw, 96px);
+    height: clamp(64px, 6vw, 96px);
     width: auto;
 }
 .brand-text-container {
@@ -60,120 +68,102 @@ body[theme="dark"] {
     font-size: clamp(20px, 2.2vw, 28px);
     color: var(--text-color-primary) !important;
     font-weight: 700;
-    line-height: 1.2;
 }
 .brand .brand-sub {
     font-size: clamp(12px, 1.4vw, 14px);
     color: var(--text-color-secondary) !important;
-    line-height: 1.2;
 }
 
+/* Linea separatrice subito sotto l’header */
 hr {
-    margin-top: 0 !important;
-    margin-bottom: 1.5rem !important;
-}
-h1, h2, h3, .card-title {
-    color: var(--text-color-primary) !important;
-}
-p, li, .card-sub {
-    color: var(--text-color-secondary) !important;
+    margin-top: 0.4rem !important;
+    margin-bottom: 1.2rem !important;
+    border-color: var(--card-border) !important;
 }
 
-.info-box {
-    background-color: var(--info-box-bg) !important;
-    border-left: 4px solid var(--primary-color) !important;
-    padding: 1rem;
-    border-radius: 4px;
-    margin-top: 1rem;
-}
-
-/* ======================================= */
-/* 4. BOTTONI                              */
-/* ======================================= */
-
-/* Base */
-div[data-testid="stButton"] > button {
-    border-radius: 8px !important;
-    font-weight: 600 !important;
-    padding: 0.5rem 1rem !important;
-    transition: all 0.2s ease-in-out;
-}
-div[data-testid="stButton"] > button p {
-    font-weight: 600 !important;
-    color: inherit !important;
-}
-
-/* ============================= */
-/* VIEW: MODE SELECTION          */
-/* ============================= */
-
-/* Modalità Guidata (verde) */
-section.main div[data-testid="stHorizontalBlock"]:has(.mode-card.guided)
-    > div:nth-child(1) div[data-testid="stButton"] > button {
-    background-color: #27ae60 !important;
-    border-color: #27ae60 !important;
-    color: white !important;
-}
-
-section.main div[data-testid="stHorizontalBlock"]:has(.mode-card.guided)
-    > div:nth-child(1) div[data-testid="stButton"] > button:hover {
-    filter: brightness(1.1);
-}
-
-/* Modalità Esplorativa (arancione) */
-section.main div[data-testid="stHorizontalBlock"]:has(.mode-card.exploratory)
-    > div:nth-child(2) div[data-testid="stButton"] > button {
-    background-color: #e67e22 !important;
-    border-color: #e67e22 !important;
-    color: white !important;
-}
-
-section.main div[data-testid="stHorizontalBlock"]:has(.mode-card.exploratory)
-    > div:nth-child(2) div[data-testid="stButton"] > button:hover {
-    filter: brightness(1.1);
-}
-
-/* ============================= */
-/* VIEW: ITEM SELECTION          */
-/* ============================= */
-
-/* Pulsanti "Seleziona" e "Conferma" (stessa struttura nel layout) */
-div[data-testid="stVerticalBlock"] > div > div:nth-child(2) div[data-testid="stButton"] > button {
-    background-color: #27ae60 !important;
-    border-color: #27ae60 !important;
-    color: white !important;
-}
-div[data-testid="stVerticalBlock"] > div > div:nth-child(2) div[data-testid="stButton"] > button:hover {
-    background-color: #2ecc71 !important;
-    border-color: #2ecc71 !important;
-}
-
-/* ======================================= */
-/* 5. STILI SPECIFICI PER VIEW             */
-/* ======================================= */
+/* 4. CARD DELLA MODALITÀ */
 .mode-card {
-    background: var(--card-bg) !important;
-    border: 1px solid var(--card-border) !important;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
     border-radius: 10px;
     padding: 1.2rem;
     margin-bottom: 1rem;
     min-height: 260px;
+    transition: transform 0.1s ease-in-out;
+}
+.mode-card:hover {
+    transform: scale(1.01);
 }
 .mode-card.guided {
-    border-left: 6px solid #27ae60 !important;
+    border-left: 6px solid #27ae60;
 }
 .mode-card.exploratory {
-    border-left: 6px solid #e67e22 !important;
+    border-left: 6px solid #e67e22;
 }
+
+/* 5. BOX INFORMATIVO */
+.info-box {
+    background-color: var(--info-box-bg);
+    border-left: 4px solid #007bff;
+    padding: 1rem;
+    border-radius: 4px;
+    margin-top: 2rem;
+}
+
+/* 6. SIDEBAR */
+[data-testid="stSidebar"] {
+    width: 350px !important;
+    padding-top: 1.5rem !important;
+}
+[data-testid="stSidebar"] h3,
+[data-testid="stSidebar"] .sidebar-title {
+    font-size: 1.2rem !important;
+    font-weight: 700 !important;
+    color: var(--text-color-primary) !important;
+}
+[data-testid="stSidebar"] .sidebar-section {
+    margin-top: 1rem !important;
+    padding-bottom: 0.5rem !important;
+    border-bottom: 1px solid var(--card-border) !important;
+}
+[data-testid="stSidebar"] ul {
+    margin-top: 0.3rem !important;
+    padding-left: 1.1rem !important;
+}
+
+/* 7. STILE BOTTONI */
+[data-testid="stHorizontalBlock"] [data-testid="stButton"] button {
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    border: none !important;
+    transition: filter 0.2s ease-in-out;
+}
+
+[data-testid="stHorizontalBlock"] > div:nth-child(1) [data-testid="stButton"] button {
+    background-color: #27ae60 !important;
+    color: white !important;
+}
+
+[data-testid="stHorizontalBlock"] > div:nth-child(2) [data-testid="stButton"] button {
+    background-color: #e67e22 !important;
+    color: white !important;
+}
+
+[data-testid="stHorizontalBlock"] [data-testid="stButton"] button:hover {
+    filter: brightness(1.1) !important;
+}
+
+/* 8. STILI SPECIFICI PER VIEW */
 .item-container {
     border-bottom: 1px solid var(--card-border);
     padding: 1rem 0;
 }
+
 .breadcrumb {
-    margin-top: -0.4rem !important;
+    margin-top: 0.5rem !important;
     margin-bottom: 0 !important;
     padding-bottom: 0.25rem;
 }
 .section-title {
-    margin-top: 2.5rem !important;
+    margin-top: 2rem !important;
 }

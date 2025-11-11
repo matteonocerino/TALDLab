@@ -12,15 +12,13 @@ Implementa RF_4, RF_5, RF_11, RF_13 del RAD
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict
 from pathlib import Path
 
-import sys
-sys.path.append(str(Path(__file__).parent.parent))
-
-from models.tald_item import TALDItem
-from models.conversation import ConversationHistory, ConversationMessage
-from services.llm_service import LLMService, LLMTimeoutError, LLMConnectionError
+# Import relativi per compatibilità con la struttura del progetto
+from ..models.tald_item import TALDItem
+from ..models.conversation import ConversationHistory, ConversationMessage
+from .llm_service import LLMService, LLMTimeoutError, LLMConnectionError
 
 
 class ConversationManager:
@@ -36,22 +34,6 @@ class ConversationManager:
     
     Attributes:
         llm_service (LLMService): Servizio LLM per generazione risposte
-    
-    Example:
-        >>> llm = LLMService(config)
-        >>> manager = ConversationManager(llm)
-        >>> history = ConversationHistory()
-        >>> 
-        >>> # Aggiunge messaggio utente
-        >>> manager.add_user_message(history, "Come ti senti?")
-        >>> 
-        >>> # Ottiene risposta paziente
-        >>> response = manager.get_assistant_response(
-        ...     history, 
-        ...     "Come ti senti?",
-        ...     tald_item,
-        ...     grade=2
-        ... )
     """
     
     def __init__(self, llm_service: LLMService):
@@ -72,21 +54,6 @@ class ConversationManager:
         Aggiunge un messaggio dell'utente allo storico.
         
         Implementa RF_5: gestione storico conversazionale.
-        
-        Args:
-            conversation (ConversationHistory): Storico da aggiornare
-            message (str): Contenuto del messaggio utente
-            
-        Returns:
-            ConversationMessage: Il messaggio creato e aggiunto
-            
-        Raises:
-            ValueError: Se il messaggio è vuoto
-            
-        Example:
-            >>> msg = manager.add_user_message(history, "Dimmi di più")
-            >>> print(msg.role)
-            'user'
         """
         # Validazione input
         if not message or not message.strip():
@@ -112,37 +79,6 @@ class ConversationManager:
         1. Chiama l'LLMService per generare la risposta
         2. Aggiunge la risposta allo storico
         3. Gestisce timeout ed errori come da RAD RF_11
-        
-        Implementa RF_4: interazione linguaggio naturale.
-        Implementa RF_5: mantenimento storico conversazionale.
-        Implementa RF_11: gestione errori con opzioni recupero.
-        
-        Args:
-            conversation (ConversationHistory): Storico conversazione
-            user_message (str): Messaggio utente (già nello storico)
-            tald_item (TALDItem): Item TALD da simulare
-            grade (int): Grado severità (0-4)
-            patient_background (str, optional): Background paziente
-            
-        Returns:
-            str: Risposta generata dal paziente virtuale
-            
-        Raises:
-            LLMTimeoutError: Se la richiesta supera 30 secondi (da gestire nel chiamante)
-            LLMConnectionError: Se ci sono errori di connessione (da gestire nel chiamante)
-            
-        Example:
-            >>> try:
-            ...     response = manager.get_assistant_response(
-            ...         history, 
-            ...         "Come ti senti?",
-            ...         item,
-            ...         grade=2
-            ...     )
-            ...     print(response)
-            ... except LLMTimeoutError:
-            ...     # Mostra opzioni "Riprova" o "Salva trascrizione"
-            ...     pass
         """
         try:
             # Chiama LLMService per generare risposta
@@ -170,7 +106,7 @@ class ConversationManager:
         
         except Exception as e:
             # Qualsiasi altro errore viene wrappato
-            raise LLMConnectionError(f"Errore imprevisto durante generazione risposta: {e}")
+            raise LLMConnectionError(f"Errore imprevisto durante generazione risposta: {e}") from e
     
     def export_transcript(
         self, 
@@ -183,22 +119,10 @@ class ConversationManager:
         
         Implementa RF_11: salvataggio trascrizione in caso di timeout/errori.
         Utilizzato quando l'utente sceglie "Salva trascrizione" dopo un timeout.
-        
-        Args:
-            conversation (ConversationHistory): Conversazione da esportare
-            tald_item (TALDItem, optional): Item simulato (per metadati)
-            grade (int, optional): Grado simulato (per metadati)
-            
-        Returns:
-            str: Percorso del file creato
-            
-        Example:
-            >>> filepath = manager.export_transcript(history, item, grade=2)
-            >>> print(f"Trascrizione salvata in: {filepath}")
         """
         # Genera nome file con timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"TALDLab_Trascrizione_{timestamp}.txt"
+        filename = Path(f"TALDLab_Trascrizione_{timestamp}.txt")
         
         # Prepara contenuto
         lines = []
@@ -227,13 +151,11 @@ class ConversationManager:
         lines.append("Fine trascrizione")
         lines.append("="*70)
         
-        # Salva file
+        # Salva file in modo sicuro
         content = "\n".join(lines)
+        filename.write_text(content, encoding="utf-8")
         
-        with open(filename, 'w', encoding='utf-8') as f:
-            f.write(content)
-        
-        return filename
+        return str(filename)
     
     def validate_conversation_state(self, conversation: ConversationHistory) -> bool:
         """
@@ -243,15 +165,6 @@ class ConversationManager:
         - Che ci siano messaggi
         - Che l'alternanza user/assistant sia corretta
         - Che non ci siano messaggi vuoti
-        
-        Args:
-            conversation (ConversationHistory): Conversazione da validare
-            
-        Returns:
-            bool: True se la conversazione è valida
-            
-        Raises:
-            ValueError: Se la conversazione non è valida
         """
         if conversation.get_message_count() == 0:
             return True  # Conversazione vuota è valida (inizio)
@@ -277,22 +190,11 @@ class ConversationManager:
         
         return True
     
-    def get_conversation_stats(self, conversation: ConversationHistory) -> dict:
+    def get_conversation_stats(self, conversation: ConversationHistory) -> Dict[str, object]:
         """
         Restituisce statistiche sulla conversazione corrente.
         
         Utile per debugging e per mostrare info all'utente nella sidebar.
-        
-        Args:
-            conversation (ConversationHistory): Conversazione da analizzare
-            
-        Returns:
-            dict: Statistiche conversazione
-            
-        Example:
-            >>> stats = manager.get_conversation_stats(history)
-            >>> print(f"Messaggi: {stats['total_messages']}")
-            >>> print(f"Durata: {stats['duration_minutes']} min")
         """
         return {
             "total_messages": conversation.get_message_count(),
@@ -308,8 +210,5 @@ class ConversationManager:
         Resetta la conversazione per una nuova simulazione.
         
         Implementa RF_14: reset sessione.
-        
-        Args:
-            conversation (ConversationHistory): Conversazione da resettare
         """
         conversation.clear()

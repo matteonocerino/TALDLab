@@ -1,36 +1,28 @@
 """
 Mode Selection View - Schermata selezione modalità
 
-Questo modulo implementa l'interfaccia per la selezione della modalità
-di esercizio (guidata o esplorativa).
+Gestisce l'interfaccia per la selezione della modalità di esercizio:
+- Modalità Guidata
+- Modalità Esplorativa
 
 Boundary del pattern Entity-Control-Boundary (vedi RAD sezione 2.6.1)
-Implementa RF_1 del RAD e mockup UI_1
+Implementa RF_1 e mockup UI_1
 """
 
 import os
-import streamlit as st
 import base64
+import streamlit as st
 
 
 def render_mode_selection() -> str | None:
     """
     Renderizza l'interfaccia di selezione modalità.
-    
-    Implementa RF_1: selezione modalità di esercizio.
-    Corrisponde a mockup UI_1 del RAD.
-    
-    Mostra due opzioni:
-    - Modalità guidata: utente seleziona item TALD in anticipo
-    - Modalità esplorativa: item assegnato casualmente
-    
+
     Returns:
         str | None: "guided", "exploratory" o None se nessuna selezione
     """
-    
-    # NOTA: Il blocco CSS è stato rimosso e spostato in 'src/views/style.css',
-    # che viene caricato globalmente da 'app.py'.
-    
+
+    # Caricamento logo TALDLab
     logo_path = os.path.join("assets", "taldlab_logo.png")
     if os.path.exists(logo_path):
         with open(logo_path, "rb") as f:
@@ -39,6 +31,7 @@ def render_mode_selection() -> str | None:
     else:
         logo_element_html = '<div class="emoji-fallback">🧠</div>'
 
+    # Header brand
     st.markdown(f"""
     <div class="brand">
         {logo_element_html}
@@ -50,12 +43,13 @@ def render_mode_selection() -> str | None:
     """, unsafe_allow_html=True)
 
     st.markdown("---")
-    
     st.markdown("## Seleziona la Modalità di Esercitazione")
     st.markdown("Scegli come desideri esercitarti nella rilevazione dei disturbi del pensiero e del linguaggio.")
-    
+
+    # Layout due colonne
     col1, col2 = st.columns(2, gap="large")
-    
+
+    # Modalità guidata
     with col1:
         st.markdown("""
         <div class="mode-card guided">
@@ -69,10 +63,11 @@ def render_mode_selection() -> str | None:
             </ul>
         </div>
         """, unsafe_allow_html=True)
-        
-        if st.button("Avvia Modalità Guidata →", use_container_width=True, key="btn_guided"):
+
+        if st.button("Avvia Modalità Guidata →", key="guided", use_container_width=True):
             return "guided"
-    
+
+    # Modalità esplorativa
     with col2:
         st.markdown("""
         <div class="mode-card exploratory">
@@ -87,9 +82,10 @@ def render_mode_selection() -> str | None:
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button("Avvia Modalità Esplorativa →", use_container_width=True, key="btn_exploratory"):
+        if st.button("Avvia Modalità Esplorativa →", key="exploratory", use_container_width=True):
             return "exploratory"
-    
+
+    # Info footer
     st.markdown("""
     <div class="info-box">
         <h4>ℹ️ Come funziona il sistema</h4>
@@ -98,31 +94,34 @@ def render_mode_selection() -> str | None:
         dettagliato con feedback formativo.</p>
     </div>
     """, unsafe_allow_html=True)
-    
+
     st.markdown("""
     <div class="app-footer">
         📌 <strong>Progetto di tesi</strong> - Studente: M. Nocerino | Relatore: Prof.ssa R. Francese
     </div>
     """, unsafe_allow_html=True)
-    
+
     return None
 
 
 def render_mode_info_sidebar():
-    """Renderizza informazioni aggiuntive nella sidebar."""
     with st.sidebar:
-        st.markdown("## 📖 Guida Rapida")
+        st.markdown('<h3 class="sidebar-title">📖 Guida Rapida</h3>', unsafe_allow_html=True)
+
+        st.markdown('<div class="sidebar-section"><strong>Modalità Guidata</strong></div>', unsafe_allow_html=True)
         st.markdown("""
-        **Modalità Guidata**
-        1. Seleziona un item TALD
-        2. Conduci l'intervista
+        1. Seleziona un item TALD  
+        2. Conduci l'intervista  
         3. Valuta il grado osservato
-        
-        **Modalità Esplorativa**
-        1. Avvia simulazione (item casuale)
-        2. Conduci l'intervista
+        """)
+
+        st.markdown('<div class="sidebar-section"><strong>Modalità Esplorativa</strong></div>', unsafe_allow_html=True)
+        st.markdown("""
+        1. Avvia simulazione (item casuale)  
+        2. Conduci l'intervista  
         3. Identifica item + valuta grado
         """)
-        st.markdown("---")
+
+        st.markdown('<div class="sidebar-section"></div>', unsafe_allow_html=True)
         st.info("**Item TALD:** 30 totali\n\n**Scala graduazione:** 0-4")
         st.warning("Strumento **formativo**, NON per uso clinico-diagnostico.")

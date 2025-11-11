@@ -8,10 +8,11 @@ della sessione corrente, coordinando tutte le fasi dell'interazione
 Entity del pattern Entity-Control-Boundary (vedi RAD sezione 2.6.1)
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import Optional
 from datetime import datetime
 from enum import Enum
+import uuid
 
 from .conversation import ConversationHistory
 from .evaluation import GroundTruth, UserEvaluation, EvaluationResult
@@ -67,9 +68,11 @@ class SessionState:
     conversation: ConversationHistory = field(default_factory=ConversationHistory)
     user_evaluation: Optional[UserEvaluation] = None
     evaluation_result: Optional[EvaluationResult] = None
-    session_id: str = field(default_factory=lambda: datetime.now().strftime("%Y%m%d_%H%M%S"))
+    session_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     created_at: datetime = field(default_factory=datetime.now)
     
+    # ======== Stato e modalità ========
+
     def is_guided_mode(self) -> bool:
         """
         Verifica se la sessione è in modalità guidata.
@@ -107,7 +110,9 @@ class SessionState:
     def is_in_report(self) -> bool:
         """Verifica se si è nella fase di visualizzazione report."""
         return self.phase == SessionPhase.REPORT
-    
+
+    # ======== Transizioni di stato ========
+
     def start_guided_mode(self):
         """
         Inizia la modalità guidata.
@@ -188,7 +193,9 @@ class SessionState:
         self.user_evaluation = user_eval
         self.evaluation_result = result
         self.phase = SessionPhase.REPORT
-    
+
+    # ======== Metriche e riepilogo ========
+
     def get_session_duration_minutes(self) -> float:
         """
         Calcola la durata totale della sessione in minuti.
@@ -213,7 +220,9 @@ class SessionState:
             "duration_minutes": self.conversation.get_duration_minutes(),
             "total_words": self.conversation.get_total_words()
         }
-    
+
+    # ======== Gestione stato ========
+
     def reset(self):
         """
         Resetta la sessione per iniziare una nuova simulazione.
@@ -228,9 +237,8 @@ class SessionState:
         self.conversation.clear()
         self.user_evaluation = None
         self.evaluation_result = None
-        # created_at viene aggiornato per tracciare la nuova simulazione
         self.created_at = datetime.now()
-        # session_id rimane per continuità (opzionale: può essere rigenerato)
+        # opzionale: session_id persistente per debug o analytics
     
     def to_dict(self) -> dict:
         """
@@ -251,7 +259,24 @@ class SessionState:
             "has_result": self.evaluation_result is not None,
             "created_at": self.created_at.isoformat()
         }
-    
+
+    # ======== Persistenza con Streamlit ========
+
+    @staticmethod
+    def ensure_in_streamlit(st_session_state):
+        """
+        Inizializza SessionState all’interno di st.session_state se assente.
+        
+        Args:
+            st_session_state (st.session_state): Stato globale Streamlit
+        
+        Returns:
+            SessionState: Oggetto di sessione persistente
+        """
+        if "tald_session" not in st_session_state:
+            st_session_state["tald_session"] = SessionState()
+        return st_session_state["tald_session"]
+
     def __str__(self) -> str:
         """Rappresentazione leggibile dello stato."""
         return (

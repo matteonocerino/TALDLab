@@ -56,6 +56,10 @@ class UserEvaluation:
         if self.item_id is not None and not (1 <= self.item_id <= 30):
             raise ValueError(f"Item ID deve essere tra 1 e 30, ricevuto: {self.item_id}")
         
+        # Protezione da note eccessivamente lunghe per compatibilità UI Streamlit
+        if len(self.notes) > 2000:
+            raise ValueError("Notes eccede la lunghezza massima consentita (2000 caratteri).")
+        
         # Imposta timestamp se non fornito
         if self.timestamp is None:
             self.timestamp = datetime.now()
@@ -128,6 +132,10 @@ class GroundTruth:
             raise ValueError(
                 f"Mode deve essere 'guided' o 'exploratory', ricevuto: {self.mode}"
             )
+        
+        # Protezione da titolo vuoto o errato
+        if not self.item_title or not isinstance(self.item_title, str):
+            raise ValueError("Item title non può essere vuoto o non testuale.")
         
         # Imposta timestamp se non fornito
         if self.timestamp is None:
@@ -211,6 +219,11 @@ class EvaluationResult:
         # Validazione score
         if not (0 <= self.score <= 100):
             raise ValueError(f"Score deve essere tra 0 e 100, ricevuto: {self.score}")
+
+        # Pulizia messaggio per compatibilità visuale
+        self.feedback_message = (self.feedback_message or "").strip()
+        if len(self.feedback_message) > 2000:
+            self.feedback_message = self.feedback_message[:2000]
         
         # Imposta timestamp se non fornito
         if self.timestamp is None:

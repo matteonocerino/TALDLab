@@ -10,6 +10,8 @@ Entity del pattern Entity-Control-Boundary (vedi RAD sezione 2.6.1)
 from dataclasses import dataclass, field
 from typing import List, Dict
 from datetime import datetime
+from io import BytesIO
+from pathlib import Path
 
 
 @dataclass
@@ -48,6 +50,10 @@ class ConversationMessage:
         # Validazione content
         if not isinstance(self.content, str) or len(self.content.strip()) == 0:
             raise ValueError("Content non può essere vuoto")
+
+        # Protezione da contenuti eccessivamente lunghi (robustezza UI Streamlit)
+        if len(self.content) > 5000:
+            raise ValueError("Content eccede la lunghezza massima consentita (5000 caratteri).")
         
         # Imposta timestamp se non fornito
         if self.timestamp is None:
@@ -250,7 +256,18 @@ class ConversationHistory:
             time_str = msg.get_formatted_time("%H:%M")
             lines.append(f"[{time_str}] {role_label}: {msg.content}")
         
-        return "\n".join(lines)
+        transcript_body = "\n".join(lines)
+
+        header = f"""
+TALDLab - Trascrizione Intervista
+Data: {self.session_start.strftime("%Y-%m-%d %H:%M:%S")}
+Durata: {self.get_duration_minutes()} minuti
+Messaggi totali: {self.get_message_count()}
+Parole totali: {self.get_total_words()}
+{'='*60}
+
+"""
+        return header + transcript_body
     
     def to_dict(self) -> Dict:
         """
@@ -266,8 +283,20 @@ class ConversationHistory:
             "total_words": self.get_total_words(),
             "messages": [msg.to_dict() for msg in self.messages]
         }
+
+    def get_as_downloadable(self):
+        """
+        Restituisce il file pronto per l'uso con st.download_button (Streamlit 1.51+).
+        
+        Returns:
+            tuple: (filename, BytesIO)
+        """
+        transcript = self.to_text_transcript()
+        buffer = BytesIO(transcript.encode("utf-8"))
+        filename = f"interview_transcript_{self.session_start.strftime('%Y%m%d_%H%M%S')}.txt"
+        return filename, buffer
     
-    def export_to_file(self, filename: str):
+    def export_to_file(self, filename: str = None):
         """
         Esporta la trascrizione in un file .txt.
         
@@ -279,23 +308,9 @@ class ConversationHistory:
         Example:
             >>> history.export_to_file("interview_transcript_2024-10-21.txt")
         """
-        transcript = self.to_text_transcript()
-        
-        # Aggiungi metadati in testa
-        header = f"""
-TALDLab - Trascrizione Intervista
-Data: {self.session_start.strftime("%Y-%m-%d %H:%M:%S")}
-Durata: {self.get_duration_minutes()} minuti
-Messaggi totali: {self.get_message_count()}
-Parole totali: {self.get_total_words()}
-{'='*60}
-
-"""
-        
-        full_content = header + transcript
-        
-        with open(filename, 'w', encoding='utf-8') as f:
-            f.write(full_content)
+        filename = filename or f"interview_transcript_{self.session_start.strftime('%Y%m%d_%H%M%S')}.txt"
+        path = Path(filename)
+        path.write_text(self.to_text_transcript(), encoding="utf-8")
     
     def __len__(self) -> int:
         """Supporto per len(history)."""

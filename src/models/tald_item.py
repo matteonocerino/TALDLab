@@ -70,8 +70,8 @@ class TALDItem:
             ValueError: Se i dati non rispettano i vincoli
         """
         # Validazione ID
-        if not (1 <= self.id <= 30):
-            raise ValueError(f"Item ID deve essere tra 1 e 30, ricevuto: {self.id}")
+        if not isinstance(self.id, int) or not (1 <= self.id <= 30):
+            raise ValueError(f"Item ID deve essere un intero tra 1 e 30, ricevuto: {self.id}")
         
         # Validazione type
         if self.type not in ["objective", "subjective"]:
@@ -79,8 +79,18 @@ class TALDItem:
                 f"Item type deve essere 'objective' o 'subjective', ricevuto: {self.type}"
             )
         
+        # Validazione stringhe di testo
+        for field_name, value in {
+            "title": self.title,
+            "description": self.description,
+            "criteria": self.criteria,
+            "example": self.example
+        }.items():
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{field_name} non può essere vuoto o non testuale.")
+        
         # Validazione default_grade
-        if not (0 <= self.default_grade <= 4):
+        if not isinstance(self.default_grade, int) or not (0 <= self.default_grade <= 4):
             raise ValueError(
                 f"Default grade deve essere tra 0 e 4, ricevuto: {self.default_grade}"
             )
@@ -91,6 +101,12 @@ class TALDItem:
             raise ValueError(
                 f"Graduation deve contenere le chiavi 0-4, ricevuto: {self.graduation.keys()}"
             )
+        
+        # Validazione domande
+        if not isinstance(self.questions, list):
+            raise ValueError("Questions deve essere una lista di stringhe.")
+        if any(not isinstance(q, str) or not q.strip() for q in self.questions):
+            raise ValueError("Tutte le domande in questions devono essere stringhe non vuote.")
     
     def is_objective(self) -> bool:
         """
@@ -123,7 +139,7 @@ class TALDItem:
         Raises:
             ValueError: Se il grado non è tra 0 e 4
         """
-        if not (0 <= grade <= 4):
+        if not isinstance(grade, int) or not (0 <= grade <= 4):
             raise ValueError(f"Grade deve essere tra 0 e 4, ricevuto: {grade}")
         
         return self.graduation[str(grade)]
@@ -176,7 +192,11 @@ class TALDItem:
             ... }
             >>> item = TALDItem.from_dict(data)
         """
-        return cls(**data)
+        # Pulizia chiavi inattese (compatibilità con versioni precedenti del JSON)
+        valid_keys = {"id", "title", "type", "description", "criteria", "example",
+                      "questions", "graduation", "default_grade"}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered_data)
     
     def __str__(self) -> str:
         """

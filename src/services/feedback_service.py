@@ -16,9 +16,6 @@ from datetime import datetime
 from typing import Optional
 from pathlib import Path
 
-import sys
-sys.path.append(str(Path(__file__).parent.parent))
-
 
 class Feedback:
     """
@@ -101,22 +98,10 @@ class FeedbackService:
     def validate_rating(rating: any, field_name: str) -> Optional[int]:
         """
         Valida un rating (1-5 o None).
-        
-        Args:
-            rating (any): Valore da validare
-            field_name (str): Nome campo (per messaggio errore)
-            
-        Returns:
-            int | None: Rating validato o None
-            
-        Raises:
-            ValueError: Se il rating non è valido
         """
-        # Se None o vuoto, è ok (campi opzionali)
         if rating is None or rating == "":
             return None
         
-        # Verifica che sia numerico
         try:
             rating_int = int(rating)
         except (TypeError, ValueError):
@@ -124,7 +109,6 @@ class FeedbackService:
                 f"{field_name} deve essere un numero intero, ricevuto: {type(rating).__name__}"
             )
         
-        # Verifica range 1-5
         if not (1 <= rating_int <= 5):
             raise ValueError(
                 f"{field_name} deve essere compreso tra 1 e 5, ricevuto: {rating_int}"
@@ -136,12 +120,6 @@ class FeedbackService:
     def validate_comments(comments: any) -> str:
         """
         Valida e normalizza i commenti.
-        
-        Args:
-            comments (any): Commenti da validare
-            
-        Returns:
-            str: Commenti normalizzati
         """
         if comments is None:
             return ""
@@ -161,36 +139,18 @@ class FeedbackService:
     ) -> Feedback:
         """
         Crea e valida un oggetto Feedback.
-        
-        Args:
-            overall_rating (int, optional): Valutazione generale (1-5)
-            realism_rating (int, optional): Realismo (1-5)
-            usefulness_rating (int, optional): Utilità didattica (1-5)
-            comments (str, optional): Commenti liberi
-            metadata (dict, optional): Metadati non identificativi
-            
-        Returns:
-            Feedback: Oggetto feedback validato
-            
-        Raises:
-            ValueError: Se i dati non sono validi
         """
-        # Valida ratings
         validated_overall = FeedbackService.validate_rating(overall_rating, "Overall rating")
         validated_realism = FeedbackService.validate_rating(realism_rating, "Realism rating")
         validated_usefulness = FeedbackService.validate_rating(usefulness_rating, "Usefulness rating")
-        
-        # Valida comments
         validated_comments = FeedbackService.validate_comments(comments)
         
-        # Verifica che almeno un campo sia compilato
         if (validated_overall is None and 
             validated_realism is None and 
             validated_usefulness is None and 
             not validated_comments):
             raise ValueError("Il feedback deve contenere almeno una valutazione o un commento")
         
-        # Crea oggetto Feedback
         return Feedback(
             overall_rating=validated_overall,
             realism_rating=validated_realism,
@@ -206,36 +166,7 @@ class FeedbackService:
     ) -> bool:
         """
         Salva il feedback nel file feedback_log.json.
-        
-        Implementa RF_10: raccolta e persistenza feedback.
-        
-        Il file viene creato se non esiste. I feedback sono aggiunti
-        in append-only mode. Tutti i dati sono anonimi.
-        
-        Args:
-            feedback_data (dict): Dizionario con ratings e comments
-            metadata (dict, optional): Metadati non identificativi
-                (item_id, item_title, mode, score, etc.)
-            
-        Returns:
-            bool: True se salvataggio riuscito
-            
-        Raises:
-            ValueError: Se i dati non sono validi
-            IOError: Se ci sono problemi di scrittura file
-            
-        Example:
-            >>> feedback_data = {
-            ...     "overall_rating": 5,
-            ...     "realism_rating": 4,
-            ...     "usefulness_rating": 5,
-            ...     "comments": "Ottimo strumento"
-            ... }
-            >>> metadata = {"item_id": 1, "mode": "guided"}
-            >>> FeedbackService.save_feedback(feedback_data, metadata)
-            True
         """
-        # Crea e valida feedback
         feedback = FeedbackService.create_feedback(
             overall_rating=feedback_data.get("overall_rating"),
             realism_rating=feedback_data.get("realism_rating"),
@@ -244,7 +175,6 @@ class FeedbackService:
             metadata=metadata
         )
         
-        # Carica feedback esistenti (se il file esiste)
         feedback_list = []
         feedback_path = Path(FeedbackService.FEEDBACK_FILE)
         
@@ -253,19 +183,14 @@ class FeedbackService:
                 with open(feedback_path, 'r', encoding='utf-8') as f:
                     feedback_list = json.load(f)
             except json.JSONDecodeError:
-                # File corrotto, inizia lista nuova
                 feedback_list = []
         
-        # Aggiungi nuovo feedback
         feedback_list.append(feedback.to_dict())
         
-        # Salva tutto il file (append-only simulato)
         try:
             with open(feedback_path, 'w', encoding='utf-8') as f:
                 json.dump(feedback_list, f, ensure_ascii=False, indent=2)
-            
             return True
-        
         except IOError as e:
             raise IOError(f"Errore nel salvataggio del feedback: {e}")
     
@@ -273,9 +198,6 @@ class FeedbackService:
     def get_feedback_count() -> int:
         """
         Restituisce il numero di feedback salvati.
-        
-        Returns:
-            int: Numero di feedback nel file
         """
         feedback_path = Path(FeedbackService.FEEDBACK_FILE)
         
@@ -293,45 +215,25 @@ class FeedbackService:
     def get_feedback_statistics() -> dict:
         """
         Calcola statistiche aggregate sui feedback.
-        
-        Utile per analisi e validazione del prototipo.
-        Non restituisce dati identificativi.
-        
-        Returns:
-            dict: Statistiche aggregate
         """
         feedback_path = Path(FeedbackService.FEEDBACK_FILE)
         
         if not feedback_path.exists():
-            return {
-                "count": 0,
-                "average_ratings": {},
-                "by_mode": {}
-            }
+            return {"count": 0, "average_ratings": {}, "by_mode": {}}
         
         try:
             with open(feedback_path, 'r', encoding='utf-8') as f:
                 feedback_list = json.load(f)
         except (json.JSONDecodeError, IOError):
-            return {
-                "count": 0,
-                "average_ratings": {},
-                "by_mode": {}
-            }
+            return {"count": 0, "average_ratings": {}, "by_mode": {}}
         
         if not feedback_list:
-            return {
-                "count": 0,
-                "average_ratings": {},
-                "by_mode": {}
-            }
+            return {"count": 0, "average_ratings": {}, "by_mode": {}}
         
-        # Calcola medie
         overall_ratings = [f["ratings"]["overall"] for f in feedback_list if f["ratings"]["overall"] is not None]
         realism_ratings = [f["ratings"]["realism"] for f in feedback_list if f["ratings"]["realism"] is not None]
         usefulness_ratings = [f["ratings"]["usefulness"] for f in feedback_list if f["ratings"]["usefulness"] is not None]
         
-        # Conta per modalità
         by_mode = {}
         for f in feedback_list:
             mode = f.get("metadata", {}).get("mode", "unknown")
