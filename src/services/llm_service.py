@@ -11,11 +11,12 @@ Control del pattern Entity-Control-Boundary (vedi RAD sezione 2.6.1)
 Implementa RF_3, RF_4, RF_11 del RAD
 """
 
-import time
 import random
+import threading
 from typing import Dict, Optional
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
+from google.api_core.exceptions import ResourceExhausted, DeadlineExceeded
 
 import sys
 from pathlib import Path
@@ -26,7 +27,7 @@ from models.conversation import ConversationHistory
 
 
 class LLMTimeoutError(Exception):
-    """Eccezione per timeout nelle chiamate LLM (>30 secondi)."""
+    """Eccezione per timeout nelle chiamate LLM."""
     pass
 
 
@@ -43,27 +44,12 @@ class LLMService:
     - Configurare e inizializzare Gemini API
     - Costruire prompt clinicamente accurati per simulazione pazienti
     - Generare risposte coerenti con i disturbi TALD
-    - Gestire timeout (30s) ed errori come da RAD RF_11
+    - Gestire timeout ed errori come da RAD RF_11
     - Generare spiegazioni cliniche per i report
-    
-    Attributes:
-        config (dict): Configurazione LLM (api_key, model, temperature, max_tokens)
-        model: Istanza del modello Gemini
-        timeout (int): Timeout in secondi per le richieste (default: 30)
-    
-    Example:
-        >>> config = {"api_key": "...", "model": "gemini-1.5-pro", ...}
-        >>> llm = LLMService(config)
-        >>> response = llm.generate_response(
-        ...     user_message="Come ti senti?",
-        ...     conversation_history=history,
-        ...     tald_item=item,
-        ...     grade=2
-        ... )
     """
     
-    # Timeout per richieste API (come da RAD RF_11)
-    REQUEST_TIMEOUT = 30  # secondi
+    # Timeout calibrato per Gemini Flash Lite
+    REQUEST_TIMEOUT = 12  # secondi
     
     def __init__(self, config: Dict[str, any]):
         """
@@ -79,7 +65,6 @@ class LLMService:
         self.config = config
         self.timeout = self.REQUEST_TIMEOUT
         
-        # Verifica presenza API key
         if not config.get('api_key'):
             raise ValueError(
                 "API key non presente nella configurazione. "
@@ -87,11 +72,8 @@ class LLMService:
             )
         
         try:
-            # Configura Gemini API
             genai.configure(api_key=config['api_key'])
             
-            # Inizializza il modello con configurazione di sicurezza
-            # Disabilitiamo i filtri di sicurezza per contenuti clinici/medici
             safety_settings = {
                 HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -108,289 +90,278 @@ class LLMService:
             raise LLMConnectionError(f"Errore nella configurazione di Gemini API: {e}")
     
     def _generate_patient_background(self) -> str:
-        """
-        Genera un background paziente randomizzato.
-        
-        Crea profili fittizi con nome, età e professione casuali
-        per dare naturalezza e varietà alle simulazioni.
-        
-        Returns:
-            str: Background paziente (es. "Ti chiami Marco, hai 32 anni, lavori come impiegato")
-        """
-        # Pool di nomi italiani comuni
+        """Genera un background paziente randomizzato."""
         nomi_m = ["Marco", "Luca", "Giuseppe", "Andrea", "Matteo", "Alessandro", 
                   "Davide", "Stefano", "Paolo", "Riccardo"]
         nomi_f = ["Laura", "Sofia", "Francesca", "Chiara", "Giulia", "Elena", 
                   "Sara", "Valentina", "Martina", "Alessia"]
         
-        # Genera genere e nome
         genere = random.choice(["M", "F"])
         nome = random.choice(nomi_m if genere == "M" else nomi_f)
-        
-        # Genera età casuale (25-55 anni)
         eta = random.randint(25, 55)
         
-        # Pool di professioni comuni
         lavori = [
-            "impiegato in un'azienda",
-            "insegnante di scuola media",
-            "tecnico informatico",
-            "infermiere",
-            "cameriere in un ristorante",
-            "commesso in un negozio",
-            "operaio",
-            "segretaria",
-            "cuoco",
-            "meccanico",
-            "studente universitario",
-            "impiegato comunale",
-            "addetto alle vendite",
-            "receptionist"
+            "impiegato in un'azienda", "insegnante di scuola media",
+            "tecnico informatico", "cameriere in un ristorante",
+            "commesso in un negozio", "operaio", "segretaria", "cuoco",
+            "meccanico", "studente universitario", "impiegato comunale",
+            "addetto alle vendite", "receptionist"
         ]
         
         lavoro = random.choice(lavori)
-        
         return f"Ti chiami {nome}, hai {eta} anni, lavori come {lavoro}"
     
-    def _get_grade_instructions(self, grade: int, tald_item: TALDItem) -> str:
-        """
-        Genera istruzioni specifiche basate sul grado di severità dell'item.
-        
-        IMPORTANTE: Usa le descrizioni SPECIFICHE dal JSON dell'item TALD,
-        non descrizioni generiche. Ogni item ha termini propri per i gradi.
-        
-        Args:
-            grade (int): Grado TALD (0-4)
-            tald_item (TALDItem): Item TALD con le sue descrizioni specifiche
-            
-        Returns:
-            str: Istruzioni per il prompt
-        """
-        if grade == 0:
-            return "Il disturbo non è presente. Rispondi in modo normale e coerente."
-        
-        # Prende la descrizione SPECIFICA dal JSON dell'item
-        # Es. per Dissociation: "incoherence", "disjointed speech", "scattered speech"
-        # Es. per Derailment: grade 4 è "extreme" non "severe"
-        grade_description = tald_item.get_grade_description(grade)
-        
-        # Costruisce istruzioni usando la terminologia specifica dell'item
-        return f"""GRADO {grade}/4 - {grade_description}
-
-Manifesta il disturbo "{tald_item.title}" con questa specifica intensità.
-La descrizione del grado è quella ufficiale dal manuale TALD per questo item."""
-    
-    def _get_awareness_instructions(self, item_type: str) -> str:
+    def _get_awareness_instructions(self, tald_item: TALDItem) -> str:
         """
         Genera istruzioni sulla consapevolezza del disturbo.
-        
-        Args:
-            item_type (str): "objective" o "subjective"
-            
-        Returns:
-            str: Istruzioni sulla consapevolezza
+        Differenzia tra disturbi oggettivi (paziente inconsapevole) e 
+        soggettivi (paziente consapevole ma riporta solo se interrogato).
         """
-        if item_type == "objective":
-            return (
-                "IMPORTANTE - DISTURBO OGGETTIVO:\n"
-                "- NON sei consapevole di avere questo disturbo\n"
-                "- Rispondi in modo naturale senza renderti conto del problema\n"
-                "- Se ti viene chiesto del disturbo, non riconoscerlo direttamente\n"
-                "- Il disturbo emerge spontaneamente nel tuo modo di parlare"
+        if tald_item.is_objective():
+            return """IMPORTANTE - DISTURBO OGGETTIVO:
+- NON sei consapevole di avere questo disturbo.
+- Il disturbo emerge spontaneamente nel tuo modo di parlare, fin dalla prima risposta.
+- Se ti viene fatto notare il disturbo, reagisci con genuina confusione o incomprensione 
+  ("Non capisco cosa intende...", "Davvero? Non me ne sono accorto...").
+- Non negare in modo difensivo, semplicemente non capisci di cosa si parla."""
+        else:
+            return """IMPORTANTE - DISTURBO SOGGETTIVO:
+- SEI consapevole di questo disturbo e del disagio che provoca.
+- NON parlare spontaneamente del disturbo; descrivilo SOLO se l'intervistatore 
+  ti chiede direttamente come ti senti o se hai difficoltà specifiche.
+- Quando richiesto, puoi descrivere le tue esperienze interne e il tuo disagio.
+- NON usare MAI il nome tecnico del disturbo."""
+
+    def _get_grade_modulation_instructions(self, grade: int) -> str:
+        """
+        Restituisce istruzioni generali su come modulare l'intensità del disturbo.
+        Le descrizioni specifiche del grado vengono dal JSON dell'item.
+        """
+        if grade == 0:
+            return "Il disturbo NON è presente. Rispondi in modo completamente normale."
+        elif grade == 1:
+            return """## Intensità GRADO 1 (dubbio):
+Il fenomeno è appena percepibile, al limite della normalità.
+Manifestalo RARAMENTE (1-2 volte nell'intera conversazione) e in modo molto sottile."""
+        elif grade == 2:
+            return """## Intensità GRADO 2 (lieve):
+Il fenomeno è presente ma non compromette significativamente la comunicazione.
+Manifestalo ALCUNE VOLTE durante la conversazione, in modo riconoscibile."""
+        elif grade == 3:
+            return """## Intensità GRADO 3 (moderato):
+Il fenomeno è evidente e influenza la conversazione.
+Manifestalo SPESSO, l'intervistatore deve notarlo chiaramente."""
+        else:  # grade == 4
+            return """## Intensità GRADO 4 (severo/estremo):
+Il fenomeno DOMINA la conversazione e può renderla molto difficile.
+Manifestalo in QUASI OGNI risposta, in modo marcato."""
+
+    def _get_item_specific_instructions(self, tald_item: TALDItem) -> str:
+        """
+        Genera istruzioni specifiche per alcuni item TALD che richiedono
+        comportamenti particolari (es. pause, interruzioni, prolissità).
+        """
+        # Item che richiedono pause esplicite
+        pause_items = ["Slowed Thinking", "Rupture of Thought", "Blocking"]
+        
+        # Item che richiedono prolissità (mai risposte brevi)
+        verbose_items = ["Logorrhoea", "Pressured Speech", "Circumstantiality", 
+                        "Poverty of Content of Speech"]
+        
+        # Item che richiedono risposte brevi
+        brief_items = ["Poverty of Speech"]
+        
+        instructions = []
+        
+        if tald_item.title in pause_items:
+            instructions.append(
+                "- Usa '...' o '(pausa)' per indicare pause significative nel discorso, "
+                "coerenti con il disturbo simulato."
             )
-        else:  # subjective
-            return (
-                "IMPORTANTE - DISTURBO SOGGETTIVO:\n"
-                "- SEI consapevole di questo disturbo\n"
-                "- Puoi descrivere come ti senti quando richiesto\n"
-                "- Puoi riportare il tuo disagio soggettivo\n"
-                "- Tuttavia NON menzionare mai il nome tecnico del disturbo"
+        
+        if tald_item.title in verbose_items:
+            instructions.append(
+                "- Le tue risposte devono essere SEMPRE elaborate e prolisse, "
+                "anche per domande semplici o saluti. Mai risposte brevi."
             )
-    
-    def build_system_prompt(
+        
+        if tald_item.title in brief_items:
+            instructions.append(
+                "- Le tue risposte devono essere SEMPRE molto brevi, concrete, "
+                "monosillabiche quando possibile. Non elaborare mai spontaneamente."
+            )
+        
+        if tald_item.title == "Echolalia":
+            instructions.append(
+                "- Ripeti parole o frasi dell'intervistatore prima di (eventualmente) rispondere."
+            )
+        
+        if tald_item.title == "Verbigeration":
+            instructions.append(
+                "- Ripeti singole parole più volte all'interno delle tue frasi."
+            )
+        
+        if tald_item.title == "Perseveration":
+            instructions.append(
+                "- Torna ripetutamente a idee o frasi menzionate in precedenza, "
+                "anche quando non sono più pertinenti."
+            )
+        
+        if tald_item.title == "Restricted Thinking":
+            instructions.append(
+                "- Riporta ogni argomento al tuo tema fisso, "
+                "anche quando l'intervistatore propone altri argomenti."
+            )
+        
+        if tald_item.title == "Crosstalk":
+            instructions.append(
+                "- Rispondi 'a lato' della domanda: capisci cosa ti viene chiesto "
+                "ma la tua risposta non centra il punto, pur essendo grammaticalmente corretta."
+            )
+        
+        if instructions:
+            return "\n## Istruzioni specifiche per questo disturbo:\n" + "\n".join(instructions)
+        return ""
+
+    def _build_system_prompt(
         self, 
         tald_item: TALDItem, 
         grade: int,
         patient_background: Optional[str] = None
     ) -> str:
         """
-        Costruisce il prompt di sistema per simulare il paziente virtuale.
-        
-        Questo è il metodo più critico: determina la qualità della simulazione.
-        Il prompt è strutturato per:
-        - Definire il ruolo (paziente psichiatrico)
-        - Specificare il disturbo da manifestare
-        - Dare istruzioni comportamentali precise
-        - Fornire esempi clinici
-        - Adattare severità al grado SPECIFICO dell'item
-        
-        Args:
-            tald_item (TALDItem): Item TALD da simulare
-            grade (int): Grado di severità (0-4)
-            patient_background (str, optional): Background fittizio del paziente
-            
-        Returns:
-            str: Prompt completo per il sistema
+        Costruisce il prompt di sistema per simulare il paziente.
+        Versione aggiornata con istruzioni più precise basate sul manuale TALD.
         """
-        # Genera background casuale se non fornito
         if patient_background is None:
             patient_background = self._generate_patient_background()
         
-        # Costruisce il prompt strutturato
+        grade_description = tald_item.get_grade_description(grade)
+        awareness_instructions = self._get_awareness_instructions(tald_item)
+        grade_modulation = self._get_grade_modulation_instructions(grade)
+        item_specific = self._get_item_specific_instructions(tald_item)
+
         prompt = f"""# RUOLO E CONTESTO
-Sei un paziente durante un colloquio clinico con uno psicologo/psichiatra.
-
-{patient_background}
-
-Sei qui per un colloquio di valutazione. Rispondi alle domande in modo naturale e autentico.
+Sei un PAZIENTE in un colloquio psichiatrico, non un medico o esaminatore.
+{patient_background}.
+Rispondi SOLO quando l'intervistatore ti fa una domanda. Non iniziare mai tu l'interazione.
+L'intervistatore è un professionista clinico. Non conosci il suo genere, quindi usa forme neutre o il maschile generico. Mantieni un tono rispettoso e formale (dare del "lei").
 
 ---
 
 # DISTURBO DA SIMULARE
-
 **Disturbo:** {tald_item.title}
-**Tipo:** {tald_item.type.upper()} ({"osservabile dall'esaminatore" if tald_item.type == "objective" else "riportato soggettivamente"})
-
-**Descrizione Clinica:**
-{tald_item.description}
-
-**Criteri Manifestazione:**
-{tald_item.criteria}
-
-**Esempio Tipico di questo Disturbo:**
-{tald_item.example}
+**Tipo:** {tald_item.type.upper()}
+**Descrizione Clinica:** {tald_item.description}
+**Criteri di Manifestazione:** {tald_item.criteria}
+**Esempio Tipico:** {tald_item.example}
 
 ---
 
 # SEVERITÀ DELLA MANIFESTAZIONE
+**GRADO {grade}/4**
+**Descrizione specifica per questo item:** {grade_description}
 
-{self._get_grade_instructions(grade, tald_item)}
-
----
-
-# ISTRUZIONI COMPORTAMENTALI CRITICHE
-
-{self._get_awareness_instructions(tald_item.type)}
-
-## Regole Fondamentali:
-1. NON menzionare MAI il nome del disturbo ("{tald_item.title}")
-2. NON dire frasi come "Ho {tald_item.title}" o "Manifesto questo sintomo"
-3. Manifesta il disturbo NATURALMENTE nel tuo modo di parlare/pensare
-4. NON descrivere azioni fisiche (es. "mi sistema sulla sedia", "gesticola")
-5. Questo è un colloquio VERBALE: rispondi solo con le PAROLE che diresti
-6. Mantieni ASSOLUTA coerenza con il disturbo per tutta la conversazione
-7. Rispondi in modo autentico, come un vero paziente
-8. Se non capisci una domanda per via del disturbo, rispondi coerentemente con la tua condizione
-
-## Stile delle Risposte:
-- Linguaggio naturale e colloquiale (italiano corrente)
-- Lunghezza appropriata al tipo di disturbo
-  * Se il disturbo implica verbosità (es. Logorrhoea, Circumstantiality): risposte lunghe
-  * Se il disturbo implica laconicità (es. Poverty of Speech): risposte brevi
-  * Altrimenti: risposte di lunghezza normale
-- Emozioni appropriate al contesto della domanda
-- Coerenza con il background personale
-
-## Contesto Clinico:
-- Sei in un ambiente sicuro e professionale
-- L'esaminatore è un professionista che vuole aiutarti
-- Puoi essere aperto nelle risposte
-- Non devi fingere o nascondere nulla (il disturbo emerge naturalmente)
+{grade_modulation}
+{item_specific}
 
 ---
 
-# INIZIA LA SIMULAZIONE
+# ISTRUZIONI SULLA CONSAPEVOLEZZA
+{awareness_instructions}
 
-Ora rispondi alle domande dell'esaminatore manifestando naturalmente il disturbo descritto.
-Ricorda: il tuo compito è ESSERE il paziente, non DESCRIVERE il paziente.
-"""
+---
+
+# REGOLE COMPORTAMENTALI FONDAMENTALI
+
+1. **Sei un paziente.** Non dare istruzioni, non accogliere, non guidare la conversazione.
+
+2. **Il disturbo si manifesta SEMPRE.** Ogni tua risposta deve mostrare il disturbo al grado 
+   richiesto, incluse le risposte a saluti o domande semplici.
+
+3. **Non invertire i ruoli.** Non formulare domande all'intervistatore. Non chiedere nulla.
+
+4. **Tono naturale.** Parla come un paziente reale: collaborativo ma non proattivo. 
+   Niente formulazioni cliniche o metalinguaggio.
+
+5. **Coerenza.** Mantieni la manifestazione del disturbo costante per tutta la conversazione.
+
+6. **Niente nomi tecnici.** Non menzionare MAI il nome del disturbo ("{tald_item.title}").
+
+7. **Niente azioni fisiche complesse.** Rispondi solo con parole. Puoi usare "..." per 
+   indicare pause se appropriato al disturbo.
+
+8. **Non iniziare nuovi argomenti.** Rispondi a ciò che ti viene chiesto, non generare 
+   iniziative autonome.
+
+9. **Tono formale.** Dai del "lei" all'intervistatore. Non fare domande personali, 
+   non usare espressioni troppo confidenziali o affettuose.
+---
+
+# INIZIO SIMULAZIONE
+Da questo momento rispondi a ogni domanda come il paziente descritto.
+Il colloquio può iniziare."""
         
         return prompt
     
-    def generate_response(
-        self,
-        user_message: str,
-        conversation_history: ConversationHistory,
-        tald_item: TALDItem,
-        grade: int,
-        patient_background: Optional[str] = None
-    ) -> str:
+    def start_chat_session(self, tald_item: TALDItem, grade: int) -> genai.ChatSession:
         """
-        Genera la risposta del paziente virtuale.
-        
-        Questo metodo:
-        1. Costruisce il prompt di sistema
-        2. Prepara lo storico conversazionale
-        3. Invia la richiesta a Gemini con timeout
-        4. Gestisce errori e timeout come da RAD RF_11
-        
-        Args:
-            user_message (str): Messaggio/domanda dell'utente
-            conversation_history (ConversationHistory): Storico della conversazione
-            tald_item (TALDItem): Item TALD da simulare
-            grade (int): Grado di severità
-            patient_background (str, optional): Background del paziente
-            
-        Returns:
-            str: Risposta generata dal paziente virtuale
-            
-        Raises:
-            LLMTimeoutError: Se la richiesta supera i 30 secondi
-            LLMConnectionError: Se ci sono errori di connessione
+        Inizia una nuova sessione di chat inviando le istruzioni di sistema.
+        Chiamato UNA SOLA VOLTA all'inizio dell'intervista.
         """
-        try:
-            # Costruisce il prompt di sistema
-            system_prompt = self.build_system_prompt(tald_item, grade, patient_background)
-            
-            # Prepara lo storico per Gemini
-            # Gemini vuole formato: [{"role": "user/model", "parts": ["testo"]}]
-            history_for_gemini = []
-            
-            for msg in conversation_history.messages:
-                history_for_gemini.append({
-                    "role": "user" if msg.is_user_message() else "model",
-                    "parts": [msg.content]
-                })
-            
-            # Inizia la chat con storico
-            chat = self.model.start_chat(history=history_for_gemini)
-            
-            # Prepara la richiesta completa
-            full_prompt = f"{system_prompt}\n\n---\n\nDomanda dell'esaminatore: {user_message}\n\nRisposta del paziente:"
-            
-            # Chiamata API con timeout tracking
-            start_time = time.time()
-            
-            response = chat.send_message(
-                full_prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=self.config['temperature'],
-                    max_output_tokens=self.config['max_tokens'],
-                )
-            )
-            
-            elapsed_time = time.time() - start_time
-            
-            # Verifica timeout (30 secondi come da RAD)
-            if elapsed_time > self.timeout:
-                raise LLMTimeoutError(
-                    f"La richiesta ha superato il timeout di {self.timeout} secondi "
-                    f"(tempo effettivo: {elapsed_time:.1f}s)"
-                )
-            
-            # Estrai il testo della risposta
-            return response.text.strip()
-        
-        except LLMTimeoutError:
-            # Propaga il timeout error (gestito dal ConversationManager)
-            raise
-        
-        except Exception as e:
-            # Qualsiasi altro errore diventa LLMConnectionError
-            raise LLMConnectionError(
-                f"Errore durante la generazione della risposta: {str(e)}"
-            )
+        system_prompt = self._build_system_prompt(tald_item, grade)
+        chat_session = self.model.start_chat(history=[
+            {'role': 'user', 'parts': [system_prompt]},
+            {'role': 'model', 'parts': ["Ok."]}
+        ])
+        return chat_session
     
+    def generate_response(self, chat_session: genai.ChatSession, user_message: str) -> str:
+        """Genera una risposta dal paziente virtuale."""
+        response_container = {"text": None, "error": None}
+
+        def call_model():
+            try:
+                response = chat_session.send_message(
+                    user_message,
+                    request_options={'timeout': self.timeout}
+                )
+                if response and getattr(response, "text", None):
+                    response_container["text"] = response.text.strip()
+                else:
+                    response_container["error"] = LLMTimeoutError("Risposta vuota o non ricevuta.")
+            except Exception as e:
+                response_container["error"] = e
+
+        thread = threading.Thread(target=call_model, daemon=True)
+        thread.start()
+        thread.join(timeout=self.timeout)
+
+        if thread.is_alive():
+            raise LLMTimeoutError("Timeout: il paziente virtuale non ha risposto in tempo.")
+
+        if response_container["error"]:
+            e = response_container["error"]
+
+            if isinstance(e, DeadlineExceeded):
+                raise LLMTimeoutError("Timeout interno di Gemini.")
+
+            if isinstance(e, ResourceExhausted):
+                msg = str(e).lower()
+                if any(k in msg for k in ["rate limit", "too many requests", "retry in", 
+                                          "requests per minute", "per-minute"]):
+                    raise LLMConnectionError("Limite di richieste superato, attendere qualche secondo.")
+                if "freetier" in msg or "daily" in msg:
+                    raise LLMConnectionError("Quota giornaliera di Gemini esaurita.")
+                raise LLMConnectionError(f"Risorsa esaurita: {e}")
+
+            raise LLMConnectionError(f"Errore Gemini: {e}")
+
+        if not response_container["text"]:
+            raise LLMTimeoutError("Risposta non prodotta in tempo.")
+
+        return response_container["text"]
+
     def generate_clinical_explanation(
         self,
         tald_item: TALDItem,
@@ -399,36 +370,33 @@ Ricorda: il tuo compito è ESSERE il paziente, non DESCRIVERE il paziente.
     ) -> str:
         """
         Genera una spiegazione clinica dei fenomeni osservati nella conversazione.
-        
-        Utilizzato per il report finale. Analizza la conversazione e spiega
-        quali segnali linguistici erano presenti e come identificarli.
-        
-        Args:
-            tald_item (TALDItem): Item TALD simulato
-            conversation_history (ConversationHistory): Storico della conversazione
-            grade (int): Grado di severità
-            
-        Returns:
-            str: Spiegazione clinica dettagliata
-            
-        Raises:
-            LLMConnectionError: Se ci sono errori nella generazione
+        Differenzia l'analisi tra disturbi oggettivi e soggettivi.
         """
         try:
-            # Prepara la trascrizione della conversazione
             transcript = conversation_history.to_text_transcript()
-            
-            # Ottiene la descrizione specifica del grado per questo item
             grade_description = tald_item.get_grade_description(grade)
             
-            # Costruisce il prompt per l'analisi clinica
+            # Focus diverso per objective vs subjective
+            if tald_item.is_objective():
+                focus_instruction = """Focalizzati sui PATTERN LINGUISTICI OSSERVABILI nella conversazione:
+- Struttura delle frasi e coerenza sintattica
+- Ripetizioni, deviazioni dal tema, interruzioni
+- Velocità e quantità della produzione verbale
+- Relazione tra domande e risposte"""
+            else:
+                focus_instruction = """Focalizzati su ciò che il paziente RIPORTA SOGGETTIVAMENTE:
+- Le esperienze interne descritte dal paziente
+- Il disagio e le difficoltà riferite
+- La consapevolezza del problema mostrata
+- Come il paziente descrive i propri sintomi"""
+
             analysis_prompt = f"""# COMPITO: Analisi Clinica di un Colloquio
 
-Sei un clinico esperto che deve analizzare un colloquio psichiatrico.
+Sei un clinico esperto che deve analizzare un colloquio psichiatrico per scopi didattici.
 
 ## DISTURBO SIMULATO
 **Item TALD:** {tald_item.title}
-**Tipo:** {tald_item.type}
+**Tipo:** {tald_item.type.capitalize()}
 **Grado:** {grade}/4 - {grade_description}
 
 **Descrizione Clinica:**
@@ -445,26 +413,30 @@ Sei un clinico esperto che deve analizzare un colloquio psichiatrico.
 
 ---
 
+## FOCUS DELL'ANALISI
+{focus_instruction}
+
+---
+
 ## RICHIESTA
 
-Fornisci un'analisi clinica dettagliata (circa 150-200 parole) che spieghi:
+Fornisci un'analisi clinica (100-250 parole) che spieghi:
 
-1. **Segnali linguistici osservati**: Quali manifestazioni specifiche del disturbo "{tald_item.title}" sono presenti nella conversazione?
+1. **Manifestazioni osservate**: Quali segnali specifici di "{tald_item.title}" sono presenti?
 
-2. **Come identificarli**: Quali aspetti del linguaggio/pensiero permettono di riconoscere questo disturbo?
+2. **Come riconoscerli**: Quali elementi permettono di identificare questo disturbo?
 
-3. **Coerenza con il grado {grade}**: In che modo la manifestazione corrisponde a "{grade_description}"?
+3. **Coerenza col grado {grade}**: La manifestazione corrisponde a "{grade_description}"?
 
-4. **Indicazioni didattiche**: Cosa dovrebbe notare uno studente per identificare correttamente questo fenomeno?
+4. **Indicazioni didattiche**: Cosa dovrebbe notare uno studente per riconoscere questo fenomeno?
 
-Scrivi in italiano, in modo chiaro e professionale, come se stessi spiegando a uno studente di psicologia/psichiatria.
+Scrivi in italiano, in modo chiaro e professionale, come per uno studente di psichiatria.
 """
             
-            # Genera l'analisi
             response = self.model.generate_content(
                 analysis_prompt,
                 generation_config=genai.types.GenerationConfig(
-                    temperature=0.3,  # Temperatura bassa per analisi più precisa
+                    temperature=0.3,
                     max_output_tokens=800,
                 )
             )
@@ -472,25 +444,11 @@ Scrivi in italiano, in modo chiaro e professionale, come se stessi spiegando a u
             return response.text.strip()
         
         except Exception as e:
-            raise LLMConnectionError(
-                f"Errore durante la generazione della spiegazione clinica: {str(e)}"
-            )
+            raise LLMConnectionError(f"Errore nella generazione della spiegazione clinica: {str(e)}")
     
     def test_connection(self) -> bool:
-        """
-        Testa la connessione all'API Gemini.
-        
-        Metodo di utilità per verificare che l'API key sia valida.
-        Non è un requisito funzionale del RAD.
-        
-        Returns:
-            bool: True se la connessione funziona
-            
-        Raises:
-            LLMConnectionError: Se il test fallisce
-        """
+        """Testa la connessione all'API Gemini."""
         try:
-            # Prova una generazione semplice
             self.model.generate_content(
                 "Test",
                 generation_config=genai.types.GenerationConfig(
@@ -498,8 +456,6 @@ Scrivi in italiano, in modo chiaro e professionale, come se stessi spiegando a u
                     max_output_tokens=5,
                 )
             )
-            # Se non solleva eccezioni, la connessione funziona
             return True
-        
         except Exception as e:
             raise LLMConnectionError(f"Test di connessione fallito: {e}")

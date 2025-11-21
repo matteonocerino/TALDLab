@@ -39,7 +39,7 @@ class ConfigurationService:
         >>> ConfigurationService.validate_configuration(config)
     """
     
-    DEFAULT_MODEL = "gemini-2.5-pro"
+    DEFAULT_MODEL = "gemini-2.5-flash-lite"
     DEFAULT_TEMPERATURE = 0.7
     DEFAULT_MAX_TOKENS = 2048
 

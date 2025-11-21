@@ -44,7 +44,7 @@ from src.views.feedback_form import render_feedback_form
 
 def load_css(file_path: str):
     """Carica e inietta un file CSS esterno nell'app Streamlit."""
-    with open(file_path) as f:
+    with open(file_path, encoding="utf-8") as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 
@@ -159,6 +159,9 @@ def handle_mode_selection():
     Implementa RF_1: selezione modalità di esercizio.
     """
     selected_mode = render_mode_selection()
+
+    from src.views.mode_selection import render_mode_info_sidebar
+    render_mode_info_sidebar()
     
     if selected_mode == "guided":
         st.session_state.session.start_guided_mode()
@@ -218,16 +221,34 @@ def handle_interview():
     current_item = st.session_state.current_item
     ground_truth = st.session_state.session.ground_truth
     
-    terminated = render_chat_interface(
+    result = render_chat_interface(
         conversation=st.session_state.conversation,
         conversation_manager=st.session_state.conversation_manager,
+        llm_service=st.session_state.llm_service,
         tald_item=current_item,
         grade=ground_truth.grade,
         mode=ground_truth.mode
     )
     
-    if terminated:
+    # Gestisce reset (torna a selezione modalità)
+    if result == "reset":
+        reset_application()
+        st.rerun()
+
+    elif result == "back_to_items":
+        # Torna a selezione item senza resettare tutto
+        st.session_state.session.phase = SessionPhase.ITEM_SELECTION
+        st.session_state.conversation.clear()
+        if 'chat_session' in st.session_state:
+            del st.session_state['chat_session']
+        if 'current_item' in st.session_state:
+            del st.session_state['current_item']
+        st.rerun()
+
+    elif result == True:
         st.session_state.session.terminate_interview()
+        if 'chat_session' in st.session_state:
+            del st.session_state['chat_session']
         st.rerun()
 
 
@@ -391,7 +412,7 @@ def main():
     
     # Carica il foglio di stile globale dell'applicazione
     load_css("src/views/style.css")
-    
+
     # Inizializza applicazione (solo prima volta)
     initialize_application()
     

@@ -15,7 +15,6 @@ from datetime import datetime
 from typing import Optional, Dict
 from pathlib import Path
 
-# Import relativi per compatibilità con la struttura del progetto
 from ..models.tald_item import TALDItem
 from ..models.conversation import ConversationHistory, ConversationMessage
 from .llm_service import LLMService, LLMTimeoutError, LLMConnectionError
@@ -31,18 +30,10 @@ class ConversationManager:
     - Mantenere coerenza della conversazione (RF_5)
     - Gestire timeout ed errori come da RAD (RF_11)
     - Esportare trascrizioni in caso di interruzioni (RF_11)
-    
-    Attributes:
-        llm_service (LLMService): Servizio LLM per generazione risposte
     """
     
     def __init__(self, llm_service: LLMService):
-        """
-        Inizializza il ConversationManager.
-        
-        Args:
-            llm_service (LLMService): Servizio LLM configurato
-        """
+        """Inizializza il ConversationManager con il servizio LLM."""
         self.llm_service = llm_service
     
     def add_user_message(
@@ -52,60 +43,48 @@ class ConversationManager:
     ) -> ConversationMessage:
         """
         Aggiunge un messaggio dell'utente allo storico.
-        
         Implementa RF_5: gestione storico conversazionale.
         """
-        # Validazione input
         if not message or not message.strip():
             raise ValueError("Il messaggio non può essere vuoto")
         
-        # Aggiunge messaggio allo storico
         msg = conversation.add_message("user", message.strip())
-        
         return msg
     
     def get_assistant_response(
         self,
+        chat_session,
         conversation: ConversationHistory,
-        user_message: str,
-        tald_item: TALDItem,
-        grade: int,
-        patient_background: Optional[str] = None
+        user_message: str
     ) -> str:
         """
         Ottiene la risposta del paziente virtuale tramite LLM.
         
-        Questo è il metodo principale che:
-        1. Chiama l'LLMService per generare la risposta
-        2. Aggiunge la risposta allo storico
-        3. Gestisce timeout ed errori come da RAD RF_11
+        Coordina la chiamata al servizio esterno e l'aggiornamento dello storico.
+        Gestisce timeout ed errori di connessione (RF_11).
+        
+        Args:
+            chat_session: Oggetto sessione gestito da LLMService
+            conversation: Storico conversazionale (Entity)
+            user_message: Ultimo messaggio utente
         """
         try:
-            # Chiama LLMService per generare risposta
+            # Generazione risposta tramite LLM
             response_text = self.llm_service.generate_response(
-                user_message=user_message,
-                conversation_history=conversation,
-                tald_item=tald_item,
-                grade=grade,
-                patient_background=patient_background
+                chat_session=chat_session,
+                user_message=user_message
             )
             
-            # Aggiunge risposta allo storico
+            # Aggiornamento storico locale
             conversation.add_message("assistant", response_text)
             
             return response_text
         
         except LLMTimeoutError:
-            # Propaga il timeout per gestione nel chiamante (View)
-            # Come da RAD RF_11: l'utente deve vedere opzioni di recupero
             raise
-        
         except LLMConnectionError:
-            # Propaga errore connessione per gestione nel chiamante
             raise
-        
         except Exception as e:
-            # Qualsiasi altro errore viene wrappato
             raise LLMConnectionError(f"Errore imprevisto durante generazione risposta: {e}") from e
     
     def export_transcript(
@@ -115,16 +94,12 @@ class ConversationManager:
         grade: Optional[int] = None
     ) -> str:
         """
-        Esporta la trascrizione della conversazione in un file .txt.
-        
-        Implementa RF_11: salvataggio trascrizione in caso di timeout/errori.
-        Utilizzato quando l'utente sceglie "Salva trascrizione" dopo un timeout.
+        Esporta la trascrizione della conversazione in un file .txt locale.
+        Implementa RF_11: salvataggio trascrizione per recupero sessione.
         """
-        # Genera nome file con timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = Path(f"TALDLab_Trascrizione_{timestamp}.txt")
         
-        # Prepara contenuto
         lines = []
         lines.append("="*70)
         lines.append("TALDLab - Trascrizione Intervista")
@@ -144,49 +119,34 @@ class ConversationManager:
         lines.append("TRASCRIZIONE")
         lines.append("="*70 + "\n")
         
-        # Aggiunge trascrizione
         lines.append(conversation.to_text_transcript())
         
         lines.append("\n" + "="*70)
         lines.append("Fine trascrizione")
         lines.append("="*70)
         
-        # Salva file in modo sicuro
         content = "\n".join(lines)
         filename.write_text(content, encoding="utf-8")
         
         return str(filename)
     
     def validate_conversation_state(self, conversation: ConversationHistory) -> bool:
-        """
-        Valida che la conversazione sia in uno stato valido.
-        
-        Verifica:
-        - Che ci siano messaggi
-        - Che l'alternanza user/assistant sia corretta
-        - Che non ci siano messaggi vuoti
-        """
+        """Valida la consistenza dello storico della conversazione."""
         if conversation.get_message_count() == 0:
-            return True  # Conversazione vuota è valida (inizio)
+            return True
         
         messages = conversation.messages
         
-        # Verifica messaggi non vuoti
         for msg in messages:
             if not msg.content or not msg.content.strip():
                 raise ValueError("Trovato messaggio vuoto nello storico")
         
-        # Verifica alternanza corretta (primo messaggio deve essere user)
         if messages[0].role != "user":
             raise ValueError("Il primo messaggio deve essere dell'utente")
         
-        # Verifica alternanza user/assistant
         for i in range(len(messages) - 1):
             if messages[i].role == messages[i + 1].role:
-                raise ValueError(
-                    f"Alternanza messaggi non valida alla posizione {i}: "
-                    f"due messaggi consecutivi con role '{messages[i].role}'"
-                )
+                raise ValueError(f"Alternanza messaggi non valida alla posizione {i}")
         
         return True
     
@@ -206,9 +166,5 @@ class ConversationManager:
         }
     
     def clear_conversation(self, conversation: ConversationHistory):
-        """
-        Resetta la conversazione per una nuova simulazione.
-        
-        Implementa RF_14: reset sessione.
-        """
+        """Resetta la conversazione (RF_14)."""
         conversation.clear()

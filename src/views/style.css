@@ -153,6 +153,41 @@ hr {
     filter: brightness(1.1) !important;
 }
 
+[data-testid="stForm"] [data-testid="stHorizontalBlock"] > div:nth-child(1) button {
+    background-color: #27ae60 !important; 
+    color: white !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    border: none !important;
+    transition: filter 0.2s ease-in-out;
+}
+
+[data-testid="stForm"] [data-testid="stHorizontalBlock"] > div:nth-child(2) button {
+    background-color: #e67e22 !important; 
+    color: white !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    border: none !important;
+    transition: filter 0.2s ease-in-out;
+}
+
+[data-testid="stForm"] [data-testid="stHorizontalBlock"] button:hover {
+    filter: brightness(1.1) !important;
+}
+
+[data-testid="stHorizontalBlock"] > div:nth-child(1) [data-testid="stDownloadButton"] button {
+    background-color: #27ae60 !important; 
+    color: white !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    border: none !important;
+    transition: filter 0.2s ease-in-out;
+}
+
+[data-testid="stHorizontalBlock"] > div:nth-child(1) [data-testid="stDownloadButton"] button:hover {
+    filter: brightness(1.1) !important;
+}
+
 /* 8. STILI SPECIFICI PER VIEW */
 .item-container {
     border-bottom: 1px solid var(--card-border);
@@ -164,6 +199,100 @@ hr {
     margin-bottom: 0 !important;
     padding-bottom: 0.25rem;
 }
+
 .section-title {
     margin-top: 2rem !important;
+}
+
+/* 9. CHAT BUBBLES + ANIMAZIONE OTTIMIZZATA */
+.chat-bubble-user, .chat-bubble-assistant {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin: 0.75rem 0;
+    animation: fadeInBubble 0.35s ease-out forwards;
+}
+
+/* Allineamento: utente a destra, assistente a sinistra */
+.chat-bubble-user {
+    justify-content: flex-end;
+}
+.chat-bubble-assistant {
+    justify-content: flex-start;
+}
+
+/* Avatar */
+.chat-avatar {
+    font-size: 1.8rem;
+    flex-shrink: 0;
+}
+
+/* Testo della bolla */
+.chat-text {
+    max-width: 75%;
+    padding: 0.7rem 1rem;
+    border-radius: 1rem;
+    line-height: 1.4;
+    font-size: 0.95rem;
+    word-wrap: break-word;
+    animation: popBubble 0.25s ease-out;
+}
+
+/* Colori distinte per ruoli */
+.chat-bubble-user .chat-text {
+    background-color: #27ae60;
+    color: #fff;
+    border-bottom-right-radius: 0.3rem;
+}
+
+.chat-bubble-assistant .chat-text {
+    background-color: #e9ecef;
+    color: #2c3e50;
+    border-bottom-left-radius: 0.3rem;
+}
+
+/* --- Animazioni --- */
+@keyframes popBubble {
+    0% { transform: scale(0.95); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes fadeInBubble {
+    0% { opacity: 0; transform: translateY(6px); }
+    100% { opacity: 1; transform: translateY(0); }
+}
+
+/* 10. INDICATORE DI DIGITAZIONE (Typing Dots) */
+.typing-indicator-container {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 0;
+}
+
+.typing-dot {
+    width: 8px;
+    height: 8px;
+    background-color: #888; /* Colore dei pallini */
+    border-radius: 50%;
+    animation: typingBounce 1.4s infinite ease-in-out both;
+}
+
+.typing-dot:nth-child(1) {
+    animation-delay: -0.32s;
+}
+
+.typing-dot:nth-child(2) {
+    animation-delay: -0.16s;
+}
+
+@keyframes typingBounce {
+    0%, 80%, 100% { 
+        transform: scale(0); 
+        opacity: 0.5;
+    }
+    40% { 
+        transform: scale(1); 
+        opacity: 1;
+    }
 }

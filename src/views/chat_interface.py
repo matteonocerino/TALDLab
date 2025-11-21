@@ -9,414 +9,481 @@ Implementa RF_4, RF_5, RF_11, RF_13 del RAD e mockup UI_2
 """
 
 import streamlit as st
+import base64
+import os
+import html
 import time
-from typing import Optional
-
 import sys
+import google.generativeai as genai
+from typing import Optional
+from datetime import datetime, timedelta
 from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent.parent))
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
 from src.models.conversation import ConversationHistory
 from src.models.tald_item import TALDItem
 from src.services.conversation_manager import ConversationManager
-from src.services.llm_service import LLMTimeoutError, LLMConnectionError
+from src.services.llm_service import LLMService, LLMTimeoutError, LLMConnectionError
+
+
+def _submit_callback():
+    """Callback per gestire l'invio del messaggio ed evitare il doppio click."""
+    if st.session_state.chat_text_area and st.session_state.chat_text_area.strip():
+        st.session_state.pending_prompt = st.session_state.chat_text_area.strip()
+        st.session_state.chat_text_area = ""
+
+        
+def _force_rebuild_llm_service(llm_service):
+    """
+    HARD RESET completo dell'LLM Service per recupero da disconnessione rete.
+    Distrugge e ricrea il modello Gemini da zero, forzando un nuovo socket di rete.
+    """
+    try:
+        # 1. Ricarica API con nuova configurazione (nuovo socket)
+        genai.configure(api_key=llm_service.config['api_key'])
+        
+        # 2. Ricrea completamente il modello (distrugge vecchia connessione)
+        from google.generativeai.types import HarmCategory, HarmBlockThreshold
+        
+        safety_settings = {
+            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+        }
+        
+        # Ricrea il modello da zero
+        llm_service.model = genai.GenerativeModel(
+            model_name=llm_service.config['model'],
+            safety_settings=safety_settings
+        )
+        
+        return True
+        
+    except Exception as e:
+        st.error(f"⚠️ Impossibile ristabilire la connessione: {e}")
+        return False
+
+
+def _rebuild_session_with_history(llm_service, tald_item, grade, conversation):
+    """
+    Ricostruisce una sessione Gemini PULITA mantenendo la memoria dello storico.
+    """
+    
+    # 1. Forza ricostruzione completa del modello LLM
+    success = _force_rebuild_llm_service(llm_service)
+    if not success:
+        raise LLMConnectionError("Impossibile ricostruire il servizio LLM")
+
+    # 2. Prepara lo storico nel formato Gemini
+    history_data = []
+    
+    for msg in conversation.messages:
+        if not msg.content:
+            continue
+            
+        role = "user" if msg.is_user_message() else "model"
+        history_data.append({
+            "role": role,
+            "parts": [msg.content]
+        })
+
+    # 3. Costruisci la nuova sessione con system prompt
+    system_prompt = llm_service._build_system_prompt(tald_item, grade)
+    
+    full_history = [
+        {'role': 'user', 'parts': [system_prompt]},
+        {'role': 'model', 'parts': ["Ok."]}
+    ] + history_data
+
+    # 4. Crea la NUOVA sessione con il modello RICOSTRUITO
+    new_session = llm_service.model.start_chat(history=full_history)
+    
+    return new_session
 
 
 def render_chat_interface(
     conversation: ConversationHistory,
     conversation_manager: ConversationManager,
+    llm_service: LLMService,
     tald_item: TALDItem,
     grade: int,
     mode: str
-) -> bool:
+) -> bool | str:
     """
-    Renderizza l'interfaccia di chat per l'intervista con il paziente virtuale.
-    
-    Implementa RF_4: interazione linguaggio naturale
-    Implementa RF_5: gestione storico conversazionale
-    Implementa RF_11: gestione errori e timeout
-    Implementa RF_13: visualizzazione storico
-    
-    Args:
-        conversation (ConversationHistory): Storico conversazione corrente
-        conversation_manager (ConversationManager): Manager per coordinamento
-        tald_item (TALDItem): Item TALD simulato
-        grade (int): Grado di severità (0-4)
-        mode (str): "guided" o "exploratory"
-        
-    Returns:
-        bool: True se l'utente ha cliccato "Termina Intervista"
+    Renderizza l'interfaccia di chat.
+    Returns: True se l'utente termina l'intervista, "reset" se torna indietro, False altrimenti.
     """
-    
-    # CSS minimo per chat bubbles (coerente con views precedenti)
-    st.markdown("""
-    <style>
-    .chat-message {
-        padding: 0.8rem 1rem;
-        margin: 0.5rem 0;
-        border-radius: 15px;
-        max-width: 80%;
-    }
-    .chat-message.user {
-        background: #e3f2fd;
-        margin-left: auto;
-        border-left: 4px solid #2196f3;
-    }
-    .chat-message.assistant {
-        background: #fff3e0;
-        border-left: 4px solid #ff6b6b;
-    }
-    .message-time {
-        font-size: 0.75rem;
-        color: #95a5a6;
-        margin-top: 0.3rem;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    # Header con logo
+
+    # 1. Inizializzazione Sessione
+    if "chat_session" not in st.session_state:
+        st.session_state.chat_session = llm_service.start_chat_session(tald_item, grade)
+
+    if "is_processing" not in st.session_state:
+        st.session_state.is_processing = False
+
+    # Renderizzazione componenti statici
     _render_header(tald_item, mode)
-    
-    # Breadcrumb
-    mode_label = "📚 Modalità Guidata" if mode == "guided" else "🔍 Modalità Esplorativa"
-    st.markdown(f"**{mode_label}** › Intervista")
-    st.markdown("---")
-    
-    # Layout: Sidebar + Chat
     render_chat_sidebar(conversation, tald_item, mode)
+
+    # Controlla se l'utente vuole tornare indietro
+    if st.session_state.get("reset_requested"):
+        del st.session_state["reset_requested"]
+        return "reset"
     
-    # Istruzioni iniziali (se chat vuota)
+    if st.session_state.get("back_to_item_selection"):
+        del st.session_state["back_to_item_selection"]
+        return "back_to_items"
+
+    # --- Visualizzazione Errori (IN ALTO) ---
+    if "llm_error" in st.session_state:
+        _handle_llm_error_display(
+            conversation, tald_item, grade, llm_service, mode
+        )
+
     if conversation.get_message_count() == 0:
         _render_initial_instructions(mode, tald_item if mode == "guided" else None)
+
+    # --- Renderizzazione Storico Chat ---
+    chat_container = st.container()
+    with chat_container:
+        for msg in conversation.messages:
+            role = "user" if msg.is_user_message() else "assistant"
+            avatar = "🧑‍⚕️" if role == "user" else "👤"
+            bubble_class = "chat-bubble-user" if role == "user" else "chat-bubble-assistant"
+
+            st.markdown(
+                f"""
+                <div class="{bubble_class}">
+                    <div class="chat-avatar">{avatar}</div>
+                    <div class="chat-text">{html.escape(msg.content)}</div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+    # --- Logica di Processing ---
+    # Esegue solo se NON c'è un errore attivo
+    if "llm_error" not in st.session_state:
+        
+        # Fase 1: Prepara il prompt
+        if st.session_state.get("pending_prompt") and not st.session_state.is_processing:
+            st.session_state.is_processing = True
+            prompt = st.session_state.pop("pending_prompt")
+
+            # Aggiungi SOLO se non è già presente (evita duplicati su retry)
+            should_add_to_history = True
+            if conversation.messages:
+                last_msg = conversation.messages[-1]
+                if last_msg.is_user_message() and last_msg.content == prompt:
+                    should_add_to_history = False
+            
+            if should_add_to_history:
+                conversation_manager.add_user_message(conversation, prompt)
+            
+            # Imposta per elaborazione
+            st.session_state.current_prompt_processing = prompt
+            st.rerun()
+
+        # Fase 2: Chiama l'LLM
+        if st.session_state.is_processing and st.session_state.get("current_prompt_processing"):
+            prompt = st.session_state.pop("current_prompt_processing")
+
+            # 1. Placeholder per i pallini (sotto la chat attuale)
+            typing_placeholder = st.empty()
+            
+            # 2. Mostra l'animazione HTML
+            typing_placeholder.markdown("""
+                <div class="chat-bubble-assistant">
+                    <div class="chat-avatar">👤</div>
+                    <div class="chat-text">
+                        <div class="typing-indicator-container">
+                            <div class="typing-dot"></div>
+                            <div class="typing-dot"></div>
+                            <div class="typing-dot"></div>
+                        </div>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+            
+            try:
+                start_time = time.time()
+                    
+                conversation_manager.get_assistant_response(
+                    chat_session=st.session_state.chat_session,
+                    conversation=conversation,
+                    user_message=prompt
+                )
+
+                if time.time() - start_time > 15:
+                    raise LLMTimeoutError("Timeout forzato.")
+                
+                # Rimuovi il tempo congelato se il retry ha avuto successo
+                if "frozen_duration_during_retry" in st.session_state:
+                    # Calcola quanto tempo è passato durante i retry falliti
+                    # e aggiusta session_start per compensare
+                    frozen = st.session_state.frozen_duration_during_retry
+                    actual = conversation.get_duration_minutes()
+                    lost_time = actual - frozen  # minuti persi durante i retry
     
-    # Storico conversazionale (RF_13)
-    st.markdown("### 💬 Conversazione")
-    _render_conversation_history(conversation)
+                    # Sposta session_start indietro per compensare il tempo perso
+                    conversation.session_start = conversation.session_start + timedelta(minutes=lost_time)
     
+                    del st.session_state["frozen_duration_during_retry"]
+
+            except Exception as e:
+                # Rimuovi la risposta assistant incompleta (se presente)
+                if conversation.messages and not conversation.messages[-1].is_user_message():
+                    conversation.messages.pop()
+    
+                # Rimuovi anche l'ultimo messaggio utente rimasto senza risposta
+                if conversation.messages and conversation.messages[-1].is_user_message():
+                    conversation.messages.pop()
+
+                # 2. Classifica errore
+                error_type = "Generic"
+                error_message = str(e)
+                
+                if isinstance(e, LLMTimeoutError):
+                    error_type = "Timeout"
+                elif isinstance(e, LLMConnectionError):
+                    error_type = "Connection"
+                elif "network" in error_message.lower() or "connection" in error_message.lower():
+                    error_type = "Connection"
+                    error_message = "Errore di rete. Verifica la connessione e riprova."
+                
+                # 3. Salva stato errore
+                st.session_state.llm_error = {
+                    "type": error_type,
+                    "message": error_message,
+                    "last_prompt": prompt,
+                    "frozen_duration": conversation.get_duration_minutes() 
+                }
+                
+                # 4. Distruggi sessione corrotta
+                if "chat_session" in st.session_state:
+                    del st.session_state["chat_session"]
+                
+            finally:
+                typing_placeholder.empty()
+                st.session_state.is_processing = False
+                st.rerun()
+
     st.markdown("---")
+
+    # --- Area Input ---
+    input_disabled = st.session_state.is_processing or "llm_error" in st.session_state
+
+    st.text_area(
+        "Scrivi qui la tua domanda...",
+        key="chat_text_area",
+        placeholder="Scrivi la tua domanda per il paziente virtuale...",
+        label_visibility="collapsed",
+        height=80,
+        disabled=input_disabled
+    )
+
+    col1, col2 = st.columns(2)
     
-    # Area input
-    with st.form(key="message_form", clear_on_submit=True):
-        user_input = st.text_area(
-            "La tua domanda:",
-            placeholder="Scrivi la tua domanda per il paziente virtuale...",
-            height=80,
-            label_visibility="collapsed",
-            key="user_input"
+    with col1:
+        terminate = st.button(
+            "⏹️ Termina", 
+            use_container_width=True,
+            disabled=st.session_state.is_processing
         )
         
-        col1, col2, col3 = st.columns([1, 1, 1])
-        with col2:
-            submit_button = st.form_submit_button(
-                "Invia ➤",
-                use_container_width=True,
-                type="primary"
-            )
-    
-    # Pulsante termina intervista
-    st.markdown("")
-    col1, col2, col3 = st.columns([1, 1, 1])
     with col2:
-        terminate_button = st.button(
-            "⏹️ Termina Intervista",
+        st.button(
+            "Invia ➤", 
             use_container_width=True,
-            type="secondary",
-            key="terminate_interview"
+            disabled=input_disabled,
+            on_click=_submit_callback
         )
-    
-    # Gestione invio messaggio
-    if submit_button and user_input and user_input.strip():
-        _handle_user_message(
-            user_input=user_input.strip(),
-            conversation=conversation,
-            conversation_manager=conversation_manager,
-            tald_item=tald_item,
-            grade=grade
-        )
-        st.rerun()
-    
-    # Gestione terminazione intervista
-    if terminate_button:
+
+    if terminate:
         if conversation.get_message_count() < 2:
-            st.warning("⚠️ Conduci almeno uno scambio conversazionale prima di terminare.")
+            st.warning("⚠️ Conduci almeno uno scambio domanda–risposta prima di terminare.")
         else:
             return True
-    
+
     return False
 
 
+def _handle_llm_error_display(conversation, tald_item, grade, llm_service, mode):
+    """
+    Mostra l'errore e le opzioni di recupero.
+    """
+    error = st.session_state['llm_error']
+    last_prompt = error.get("last_prompt")
+    error_type = error.get("type", "Generic")
+    error_message = error.get("message", "Errore sconosciuto")
+
+    _, center_col, _ = st.columns([1, 3, 1])
+    
+    with center_col:
+        with st.container(border=True):
+            if error_type == "Timeout":
+                st.error("⏱️ **Timeout:** Il paziente non ha risposto entro i tempi previsti.")
+            elif error_type == "Connection":
+                st.error(f"❌ **Errore di Connessione**\n\n{error_message}")
+                st.info("💡 **Suggerimento:** Se hai perso la connessione, verifica che il Wi-Fi sia attivo e clicca su Riprova.")
+            else:
+                st.error(f"⚠️ **Errore:** {error_message}")
+
+            b1, b2 = st.columns([1, 1])
+        
+            # TASTO SCARICA
+            with b1:
+                # Genera il contenuto SOLO al momento del click, non prima
+                st.download_button(
+                    label="💾 Salva Trascrizione",
+                    data=_generate_transcript_content(conversation, tald_item, grade, mode),
+                    file_name=f"TALD_Trascrizione_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+                    mime="text/plain",
+                    use_container_width=True,
+                    key=f"download_transcript_{datetime.now().timestamp()}"  
+                )
+
+            # TASTO RIPROVA
+            with b2:
+                if st.button("🔄 Riprova invio messaggio", use_container_width=True, type="primary"):
+                
+                    try:
+                        # SALVA il frozen_duration PRIMA di rimuovere l'errore
+                        saved_frozen_duration = st.session_state.llm_error.get("frozen_duration")
+
+                        # 1. Ricostruisce COMPLETAMENTE sessione + modello LLM
+                        new_session = _rebuild_session_with_history(
+                            llm_service, tald_item, grade, conversation
+                            )
+                    
+                        # 2. Aggiorna la sessione
+                        st.session_state.chat_session = new_session
+                    
+                        # 3. Rimette il prompt in coda
+                        st.session_state.pending_prompt = last_prompt
+
+                        # 4. Salva il tempo congelato per usarlo durante il loading
+                        st.session_state.frozen_duration_during_retry = saved_frozen_duration
+                    
+                        # 5. Rimuove l'errore
+                        del st.session_state["llm_error"]
+                    
+                        # 6. Riavvia
+                        st.rerun()
+                    
+                    except Exception as rebuild_error:
+                        st.error(f"❌ Impossibile ricostruire la sessione: {rebuild_error}")
+
+
+def _generate_transcript_content(conversation, tald_item, grade, mode):
+    """Genera il testo della trascrizione in memoria."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    header = [
+        "="*60,
+        " TALDLab - Trascrizione Intervista Clinica",
+        "="*60,
+        f"Data:      {timestamp}",
+        f"Durata:    {conversation.get_duration_minutes()} minuti",
+        f"Messaggi:  {conversation.get_message_count()}",
+        "-"*60,
+    ]
+    
+    # Mostra info in base alla modalità
+    if mode == "guided":
+        # In guidata: mostra solo item, NON il grado (deve indovinarlo)
+        header.append(f"Item TALD: {tald_item.id}. {tald_item.title} ({tald_item.type})")
+        header.append(f"Grado:     [da valutare]")
+    else:
+        # In esplorativa: non mostra nulla (deve indovinare tutto)
+        header.append(f"Item TALD: [da identificare]")
+        header.append(f"Grado:     [da valutare]")
+    
+    header.extend([
+        "="*60,
+        "\n"
+    ])
+    
+    return "\n".join(header) + conversation.to_text_transcript()
+
+
 def _render_header(tald_item: TALDItem, mode: str):
-    """Renderizza header con logo."""
-    header_col1, header_col2 = st.columns([1, 11])
+    """Renderizza l'header e il brand."""
+    logo_path = os.path.join("assets", "taldlab_logo.png")
+    if os.path.exists(logo_path):
+        with open(logo_path, "rb") as f:
+            b64_logo = base64.b64encode(f.read()).decode("utf-8")
+        logo_element_html = f'<img src="data:image/png;base64,{b64_logo}" alt="TALDLab logo" />'
+    else:
+        logo_element_html = '<div class="emoji-fallback">🧠</div>'
     
-    with header_col1:
-        try:
-            st.image("assets/taldlab_logo.png", width=60)
-        except:
-            st.markdown("<div style='font-size: 3rem;'>🧠</div>", unsafe_allow_html=True)
+    title = f"Intervista: {tald_item.title}" if mode == "guided" else "Intervista Esplorativa"
     
-    with header_col2:
-        if mode == "guided":
-            st.markdown(f"""
-            <div style="margin-top: 5px;">
-                <h2 style="margin: 0; color: #2c3e50;">Intervista: {tald_item.title}</h2>
-                <p style="color: #7f8c8d; margin: 0; font-size: 0.9rem;">
-                    {tald_item.type.capitalize()}
-                </p>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.markdown("""
-            <div style="margin-top: 5px;">
-                <h2 style="margin: 0; color: #2c3e50;">Intervista Esplorativa</h2>
-                <p style="color: #7f8c8d; margin: 0; font-size: 0.9rem;">
-                    Item nascosto - Identifica il disturbo
-                </p>
-            </div>
-            """, unsafe_allow_html=True)
+    st.markdown(f"""
+    <div class="brand">
+        {logo_element_html}
+        <div class="brand-text-container">
+            <div class="brand-title">{title}</div>
+            <div class="brand-sub">Conduzione colloquio con Paziente Virtuale</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     
-    st.markdown("")
+    mode_label = "🎯 Modalità Guidata" if mode == "guided" else "🔍 Modalità Esplorativa"
+    st.markdown(f'<p class="breadcrumb"><strong>{mode_label}</strong> › Intervista</p>', unsafe_allow_html=True)
+    st.markdown("---")
 
 
 def _render_initial_instructions(mode: str, tald_item: Optional[TALDItem] = None):
-    """Renderizza istruzioni iniziali."""
+    """Renderizza il box istruzioni iniziale."""
     if mode == "guided":
-        st.info(f"""
-        **📋 Item da osservare:** {tald_item.title}
-        
-        Conduci l'intervista ponendo domande al paziente virtuale. 
-        Al termine, dovrai valutare il **grado di severità** (0-4) del disturbo osservato.
-        
-        💡 **Suggerimento:** Fai domande aperte per osservare le manifestazioni linguistiche.
-        """)
+        st.info(f"**Obiettivo:** Interagisci con il paziente per osservare le manifestazioni di **{tald_item.title}** e valutarne il grado.")
     else:
-        st.info("""
-        **🔍 Modalità Esplorativa Attiva**
-        
-        L'item TALD è nascosto. Conduci l'intervista per:
-        1. **Identificare** quale disturbo manifesta il paziente
-        2. **Valutare** il grado di severità osservato (0-4)
-        
-        💡 **Suggerimento:** Osserva attentamente i pattern linguistici.
-        """)
-    
-    st.markdown("")
+        st.info("**Obiettivo:** Interagisci con il paziente per **identificare il disturbo** nascosto e valutarne il grado.")
 
 
-def _render_conversation_history(conversation: ConversationHistory):
-    """
-    Renderizza lo storico completo della conversazione.
-    
-    Implementa RF_13: visualizzazione storico conversazionale.
-    """
-    if conversation.get_message_count() == 0:
-        st.info("👋 **Nessun messaggio ancora.** Inizia l'intervista ponendo una domanda al paziente.")
-        return
-    
-    # Mostra messaggi
-    for msg in conversation.messages:
-        if msg.is_user_message():
-            # Messaggio utente (blu)
-            st.markdown(f"""
-            <div class="chat-message user">
-                <strong>Tu:</strong><br>
-                {msg.content}
-                <div class="message-time">{msg.get_formatted_time("%H:%M")}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            # Messaggio paziente (arancione)
-            st.markdown(f"""
-            <div class="chat-message assistant">
-                <strong>Paziente:</strong><br>
-                {msg.content}
-                <div class="message-time">{msg.get_formatted_time("%H:%M")}</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-
-def _handle_user_message(
-    user_input: str,
-    conversation: ConversationHistory,
-    conversation_manager: ConversationManager,
-    tald_item: TALDItem,
-    grade: int
-):
-    """
-    Gestisce invio messaggio e risposta paziente.
-    
-    Implementa RF_11: gestione errori e timeout.
-    """
-    # Aggiunge messaggio utente
-    conversation_manager.add_user_message(conversation, user_input)
-    
-    # Loading
-    with st.spinner("🤔 Il paziente sta pensando..."):
-        try:
-            # Ottiene risposta (timeout 30s)
-            response = conversation_manager.get_assistant_response(
-                conversation=conversation,
-                user_message=user_input,
-                tald_item=tald_item,
-                grade=grade
-            )
-            
-        except LLMTimeoutError:
-            _handle_timeout_error(conversation, conversation_manager, tald_item, grade)
-            
-        except LLMConnectionError as e:
-            _handle_connection_error(str(e), conversation, conversation_manager, tald_item, grade)
-
-
-def _handle_timeout_error(
-    conversation: ConversationHistory,
-    conversation_manager: ConversationManager,
-    tald_item: TALDItem,
-    grade: int
-):
-    """Gestisce timeout >30s (RF_11)."""
-    st.error("""
-    ⏱️ **Timeout: Il servizio LLM non risponde**
-    
-    La richiesta ha superato il limite di 30 secondi.
-    """)
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button("🔄 Riprova", use_container_width=True, type="primary", key="retry_timeout"):
-            if conversation.messages and conversation.messages[-1].is_user_message():
-                user_msg = conversation.messages[-1].content
-                conversation.messages.pop()
-                _handle_user_message(user_msg, conversation, conversation_manager, tald_item, grade)
-                st.rerun()
-    
-    with col2:
-        if st.button("💾 Salva Trascrizione", use_container_width=True, key="save_timeout"):
-            _export_transcript(conversation, conversation_manager, tald_item, grade)
-
-
-def _handle_connection_error(
-    error_message: str,
-    conversation: ConversationHistory,
-    conversation_manager: ConversationManager,
-    tald_item: TALDItem,
-    grade: int
-):
-    """Gestisce errori connessione (RF_11)."""
-    st.error(f"""
-    ❌ **Errore di connessione**
-    
-    {error_message}
-    """)
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button("🔄 Riprova", use_container_width=True, type="primary", key="retry_conn"):
-            st.rerun()
-    
-    with col2:
-        if st.button("💾 Salva Trascrizione", use_container_width=True, key="save_conn"):
-            _export_transcript(conversation, conversation_manager, tald_item, grade)
-
-
-def _export_transcript(
-    conversation: ConversationHistory,
-    conversation_manager: ConversationManager,
-    tald_item: TALDItem,
-    grade: int
-):
-    """Esporta trascrizione."""
-    try:
-        filepath = conversation_manager.export_transcript(conversation, tald_item, grade)
-        
-        with open(filepath, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        st.download_button(
-            label="⬇️ Scarica Trascrizione",
-            data=content,
-            file_name=filepath,
-            mime="text/plain",
-            use_container_width=True
-        )
-        
-        st.success(f"✅ Salvata: {filepath}")
-        
-    except Exception as e:
-        st.error(f"Errore: {e}")
-
-
-def render_chat_sidebar(
-    conversation: ConversationHistory,
-    tald_item: TALDItem,
-    mode: str
-):
-    """Renderizza sidebar con statistiche."""
+def render_chat_sidebar(conversation: ConversationHistory, tald_item: TALDItem, mode: str):
+    """Renderizza la sidebar con statistiche e info item."""
     with st.sidebar:
-        st.markdown("## 📊 Statistiche Intervista")
-        
-        # Metriche
+        st.markdown("## 📊 Monitoraggio")
         col1, col2 = st.columns(2)
-        
-        with col1:
-            st.metric("Messaggi", conversation.get_message_count())
-        
-        with col2:
-            st.metric("Durata", f"{conversation.get_duration_minutes()} min")
-        
-        # Dettagli
-        st.markdown(f"""
-        **Dettagli:**
-        - Tue domande: {len(conversation.get_user_messages())}
-        - Risposte: {len(conversation.get_assistant_messages())}
-        - Parole: {conversation.get_total_words()}
-        """)
-        
-        st.markdown("---")
-        
-        # Info item
-        if mode == "guided":
-            st.markdown("## 📋 Item TALD")
-            st.info(f"""
-            **{tald_item.id}. {tald_item.title}**
-            
-            Tipo: {tald_item.type.capitalize()}
-            """)
-            
-            with st.expander("📖 Descrizione"):
-                st.markdown(tald_item.description)
+
+        # Usa il tempo congelato se c'è un errore O se siamo in retry
+        if "llm_error" in st.session_state and "frozen_duration" in st.session_state.llm_error:
+            display_minutes = st.session_state.llm_error["frozen_duration"]
+        elif "frozen_duration_during_retry" in st.session_state:
+            display_minutes = st.session_state.frozen_duration_during_retry
         else:
-            st.warning("""
-            **🔍 Item nascosto**
-            
-            Osserva le manifestazioni per identificarlo.
-            """)
+            display_minutes = conversation.get_duration_minutes()
+
+        with col1: st.metric("Messaggi", conversation.get_message_count())
+        with col2: st.metric("Minuti", display_minutes)
+        st.caption(f"Parole scambiate: {conversation.get_total_words()}")
         
         st.markdown("---")
+        if mode == "guided":
+            st.markdown(f"## 🎯 Item in Osservazione")
+            st.info(f"**{tald_item.id}. {tald_item.title}**")
+            with st.expander("📖 Rivedi dettagli item"):
+                st.markdown(f"**Tipo:** {tald_item.type.capitalize()}")
+                st.markdown(f"**Descrizione:** *{tald_item.description}*")
+        else:
+            st.markdown("## 🔍 Obiettivo")
+            st.warning("**Identifica l'item TALD** e il suo grado di manifestazione.")
         
-        # Suggerimenti
+        st.markdown("---")
         st.markdown("## 💡 Suggerimenti")
         st.markdown("""
-        - Fai **domande aperte**
-        - Osserva **pattern linguistici**
-        - Nota **coerenza** risposte
-        - Valuta **severità**
+        - Fai **domande aperte** (es. "Parlami della tua giornata...").
+        - Osserva i **pattern linguistici** ricorrenti.
+        - Se necessario, poni domande dirette relative ai **criteri diagnostici**.
         """)
-        
+
         st.markdown("---")
-        
-        # Export
-        if st.button("💾 Esporta Trascrizione", use_container_width=True):
-            if conversation.get_message_count() > 0:
-                transcript = conversation.to_text_transcript()
-                st.download_button(
-                    label="⬇️ Scarica",
-                    data=transcript,
-                    file_name=f"trascrizione_{conversation.session_start.strftime('%Y%m%d_%H%M%S')}.txt",
-                    mime="text/plain",
-                    use_container_width=True
-                )
-            else:
-                st.warning("Nessun messaggio")
+        if mode == "guided":
+            if st.button("← Torna a Selezione Item", use_container_width=True):
+                st.session_state.back_to_item_selection = True
+        else:
+            if st.button("← Torna a Selezione Modalità", use_container_width=True):
+                st.session_state.reset_requested = True
