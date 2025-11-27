@@ -8,12 +8,11 @@ Boundary del pattern Entity-Control-Boundary (vedi RAD sezione 2.6.1)
 Implementa RF_6 del RAD e mockup UI_3
 """
 
-import streamlit as st
-from typing import Optional, List
+from typing import Optional, List, Dict
+import base64
+import os
 
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent.parent))
+import streamlit as st
 
 from src.models.tald_item import TALDItem
 from src.models.evaluation import UserEvaluation
@@ -29,7 +28,7 @@ def render_evaluation_form(
 ) -> Optional[UserEvaluation]:
     """
     Renderizza il form di valutazione finale.
-    
+
     Implementa RF_6: valutazione finale con form differenziato per modalità.
     
     Args:
@@ -39,189 +38,207 @@ def render_evaluation_form(
         mode (str): "guided" o "exploratory"
         
     Returns:
-        UserEvaluation | None: Valutazione validata se confermata, altrimenti None
-        
-    Example:
-        >>> user_eval = render_evaluation_form(
-        ...     tald_items=items,
-        ...     current_item=item,
-        ...     conversation=history,
-        ...     mode="guided"
-        ... )
-        >>> if user_eval:
-        ...     # Procedi al confronto e report
+        UserEvaluation (se submit valido)
+        "RESET" (torna a selezione modalità)
+        "BACK_TO_ITEMS" (torna a selezione item)
+        None (se nessuna azione)
     """
-    
-    # CSS minimo per radio buttons e layout
-    st.markdown(_get_evaluation_css(), unsafe_allow_html=True)
-    
+
     # Header con logo
     _render_header(mode)
     
     # Breadcrumb
-    mode_label = "📚 Modalità Guidata" if mode == "guided" else "🔍 Modalità Esplorativa"
-    st.markdown(f"**{mode_label}** › Intervista › **Valutazione**")
+    mode_label = "🎯 Modalità Guidata" if mode == "guided" else "🔍 Modalità Esplorativa"
+    st.markdown(f'<p class="breadcrumb"><strong>{mode_label}</strong> › Intervista › Valutazione</p>', unsafe_allow_html=True)
     st.markdown("---")
+
+    # sidebar riepilogo (ora gestisce anche il back con warning)
+    back_action = _render_evaluation_sidebar(conversation, current_item, mode)
     
-    # Sidebar con riepilogo
-    _render_evaluation_sidebar(conversation, current_item, mode)
-    
-    # Info box iniziale
+    # Gestisci azioni dalla sidebar
+    if back_action == "RESET":
+        return "RESET"
+    elif back_action == "BACK_TO_ITEMS":
+        return "BACK_TO_ITEMS"
+
+    # info box iniziale
     _render_info_box(mode, current_item)
-    
-    # Form principale
-    with st.form(key="evaluation_form", clear_on_submit=False):
-        
-        # CAMPO 1: Identificazione item (solo modalità esplorativa)
-        selected_item_id = None
-        if mode == "exploratory":
-            st.markdown("## 🔍 Identificazione Item TALD")
-            st.markdown("**Campo obbligatorio** - Identifica quale disturbo hai osservato")
-            
-            selected_item_id = _render_item_selector(tald_items)
-            
-            st.markdown("")
-            st.markdown("---")
-        
-        # CAMPO 2: Attribuzione grado (entrambe le modalità)
-        st.markdown("## 📊 Attribuzione Grado TALD")
-        st.markdown("**Campo obbligatorio** - Valuta la severità osservata (0-4)")
-        
-        selected_grade = _render_grade_selector(current_item if mode == "guided" else None)
-        
-        st.markdown("")
-        st.markdown("---")
-        
-        # CAMPO 3: Note opzionali (entrambe le modalità)
-        st.markdown("## 📝 Note Personali")
-        st.markdown("*Campo opzionale* - Aggiungi osservazioni sul tuo ragionamento diagnostico")
-        
-        notes = st.text_area(
-            "Le tue note:",
-            height=120,
-            placeholder="Es: Ho notato almeno 4 intrusioni significative durante l'intervista, "
-                       "soprattutto quando parlava del sonno... Il paziente sembrava consapevole "
-                       "di perdere il filo ma faticava a riprenderlo.",
-            label_visibility="collapsed",
-            key="eval_notes"
+
+    # Assicura che la session key esista per la selezione item (exploratory)
+    if 'eval_selected_item_id' not in st.session_state:
+        st.session_state['eval_selected_item_id'] = None
+
+    selected_item_id = None
+    selected_item = None
+
+    if mode == "exploratory":
+        st.markdown("## 🔍 Identificazione Item TALD")
+        st.markdown("**Campo obbligatorio** - Identifica quale disturbo hai osservato")
+
+        # prepara etichette per selectbox (più leggibile)
+        options = [f"-- Seleziona item --"]
+        id_map: Dict[str, Optional[int]] = {options[0]: None}
+        for it in tald_items:
+            label = f"Item #{it.id}: {it.title}"
+            options.append(label)
+            id_map[label] = it.id
+
+        # mantiene scelta in session_state per aggiornare dinamicamente il legend
+        selected_label = st.selectbox(
+            "Cerca e seleziona l'item manifestato:",
+            options=options,
+            index=0,
+            key="eval_item_selector",
+            help="Inizia a digitare per filtrare tra i 30 item TALD disponibili"
         )
-        
-        st.caption("💡 Queste note appariranno nel report finale e ti aiuteranno a riflettere sulla valutazione")
-        
-        st.markdown("")
+
+        selected_item_id = id_map.get(selected_label)
+        st.session_state['eval_selected_item_id'] = selected_item_id
+
+        if selected_item_id:
+            selected_item = next((x for x in tald_items if x.id == selected_item_id), None)
+            with st.expander(f"📖 Dettagli {selected_item.title}" if selected_item else "📖 Dettagli"):
+                if selected_item:
+                    st.markdown(f"**Tipo:** {selected_item.type.capitalize()}")
+                    st.markdown(f"**Descrizione:**")
+                    st.markdown(selected_item.description)
+
         st.markdown("---")
-        
-        # Pulsanti
-        col1, col2, col3 = st.columns([1, 1, 1])
-        
-        with col1:
-            back_button = st.form_submit_button(
-                "← Torna all'Intervista",
-                use_container_width=True
-            )
-        
-        with col3:
-            submit_button = st.form_submit_button(
-                "Conferma Valutazione →",
-                use_container_width=True,
-                type="primary"
-            )
-    
-    # Gestione pulsante "Torna"
-    if back_button:
-        st.warning("⚠️ Se torni all'intervista, questa valutazione andrà persa.")
-        if st.button("Confermo, torna indietro", type="secondary"):
-            return "BACK"  # Segnale speciale per tornare indietro
-    
-    # Gestione submit
-    if submit_button:
-        return _handle_evaluation_submit(
-            selected_item_id=selected_item_id,
-            selected_grade=selected_grade,
-            notes=notes,
-            mode=mode,
-            tald_items=tald_items
+
+    # --- Grade selector (dinamico) ---
+    st.markdown("## 📊 Attribuzione Grado TALD")
+    st.markdown("**Campo obbligatorio** - Valuta la severità osservata (0-4)")
+
+    # determina item di riferimento per legenda: in guided -> current_item, in exploratory -> selected_item
+    item_for_legend = current_item if mode == "guided" else (selected_item if selected_item else None)
+
+    grade = _render_dynamic_grade_selector(item_for_legend)
+
+    st.markdown("---")
+
+    # --- Note ---
+    st.markdown("## 📝 Note Personali")
+    st.markdown("*Campo opzionale* - Aggiungi osservazioni sul tuo ragionamento diagnostico")
+
+    notes = st.text_area(
+        "Le tue note:",
+        height=120,
+        placeholder="Es: Ho notato almeno 4 intrusioni significative durante l'intervista...",
+        label_visibility="collapsed",
+        key="eval_notes"
+    )
+
+    st.caption("💡 Queste note appariranno nel report finale e ti aiuteranno a riflettere sulla valutazione")
+
+    st.markdown("")
+    st.markdown("---")
+
+    # Inizializzazione stati se non esistono
+    if 'eval_error_message' not in st.session_state:
+        st.session_state.eval_error_message = None
+    if 'eval_message_type' not in st.session_state:
+        st.session_state.eval_message_type = "warning"
+    if 'eval_message_icon' not in st.session_state:
+        st.session_state.eval_message_icon = "⚠️"    
+    if 'eval_submitting' not in st.session_state:
+        st.session_state.eval_submitting = False
+
+    # Callback per "bloccare" il bottone appena cliccato
+    def _lock_submission():
+        st.session_state.eval_submitting = True
+        st.session_state.eval_error_message = None # Reset errori precedenti
+
+    # 1. Layout
+    _, col_center, _ = st.columns([2, 3, 2])
+    error_placeholder = st.empty()
+
+    # 2. Bottone (Disabilitato se stiamo già sottomettendo)
+    with col_center:
+        st.button(
+            "Conferma Valutazione →", 
+            use_container_width=True, 
+            type="primary",
+            disabled=st.session_state.eval_submitting, # <--- SI DISABILITA QUI
+            on_click=_lock_submission # <--- SCATTA SUBITO AL CLICK
         )
-    
+
+    # 3. Logica di elaborazione 
+    # Se lo stato è "submitting", proviamo a validare e ritornare l'oggetto
+    if st.session_state.eval_submitting:
+        try:
+            # A. VALIDAZIONE ITEM
+            if mode == "exploratory":
+                selected_id_session = st.session_state.get('eval_selected_item_id')
+                if selected_id_session is None:
+                    raise EvaluationValidationError("Seleziona l'item TALD che hai identificato per procedere.")
+
+            # B. VALIDAZIONE GRADO
+            if grade is None:
+                raise EvaluationValidationError("Seleziona un grado di severità (0-4) per completare la valutazione.")
+
+            # C. CREAZIONE OGGETTO
+            if mode == "guided":
+                user_eval = EvaluationService.create_guided_evaluation(grade=grade, notes=notes)
+            else:
+                user_eval = EvaluationService.create_exploratory_evaluation(
+                    item_id=selected_id_session, grade=grade, items=tald_items, notes=notes
+                )
+
+            return user_eval # Ritorna ad app.py per l'elaborazione LLM
+
+        except EvaluationValidationError as e:
+            # Se la validazione fallisce, SBLOCCHIAMO subito il bottone
+            st.session_state.eval_submitting = False
+            st.session_state.eval_error_message = str(e)
+            st.session_state.eval_message_type = "warning"
+            st.session_state.eval_message_icon = "⚠️"
+            st.rerun()
+            
+        except Exception as e:
+            # Se c'è un errore imprevisto qui, SBLOCCHIAMO
+            st.session_state.eval_submitting = False
+            st.session_state.eval_error_message = f"Errore imprevisto: {str(e)}"
+            st.session_state.eval_message_type = "error"
+            st.session_state.eval_message_icon = "❌"
+            st.rerun()
+
+    # 4. Visualizzazione Errore
+    if st.session_state.eval_error_message:
+        with error_placeholder.container():
+            st.markdown("") 
+            _, err_col, _ = st.columns([1, 4, 1]) 
+            with err_col:
+                if st.session_state.eval_message_type == "error":
+                    st.error(st.session_state.eval_error_message, icon=st.session_state.eval_message_icon)
+                else:
+                    st.warning(st.session_state.eval_error_message, icon=st.session_state.eval_message_icon)
+
     return None
 
 
-def _get_evaluation_css() -> str:
-    """CSS minimo per form valutazione."""
-    return """
-    <style>
-    /* Radio button container */
-    .grade-option {
-        background: #f8f9fa;
-        border: 2px solid #dee2e6;
-        border-radius: 10px;
-        padding: 1rem;
-        margin: 0.5rem 0;
-        transition: all 0.3s;
-        cursor: pointer;
-    }
-    
-    .grade-option:hover {
-        border-color: #3498db;
-        background: #e3f2fd;
-    }
-    
-    .grade-option.selected {
-        background: #3498db;
-        border-color: #2980b9;
-        color: white;
-    }
-    
-    /* Legend box */
-    .grade-legend {
-        background: #e8f4f8;
-        border-left: 4px solid #3498db;
-        padding: 1rem;
-        border-radius: 4px;
-        margin-top: 1rem;
-    }
-    
-    .grade-legend h4 {
-        color: #2980b9;
-        font-size: 0.9rem;
-        margin-bottom: 0.5rem;
-    }
-    
-    .grade-legend ul {
-        margin: 0;
-        padding-left: 1.5rem;
-        font-size: 0.85rem;
-        line-height: 1.8;
-    }
-    </style>
-    """
-
-
 def _render_header(mode: str):
-    """Renderizza header con logo."""
-    header_col1, header_col2 = st.columns([1, 11])
+    """Renderizza header con logo e branding coerente."""
+    logo_path = os.path.join("assets", "taldlab_logo.png")
+    if os.path.exists(logo_path):
+        with open(logo_path, "rb") as f:
+            b64_logo = base64.b64encode(f.read()).decode("utf-8")
+        logo_element_html = f'<img src="data:image/png;base64,{b64_logo}" alt="TALDLab logo" />'
+    else:
+        logo_element_html = '<div class="emoji-fallback">🧠</div>'
     
-    with header_col1:
-        try:
-            st.image("assets/taldlab_logo.png", width=60)
-        except:
-            st.markdown("<div style='font-size: 3rem;'>🧠</div>", unsafe_allow_html=True)
-    
-    with header_col2:
-        st.markdown("""
-        <div style="margin-top: 5px;">
-            <h2 style="margin: 0; color: #2c3e50;">Valutazione dell'Intervista</h2>
-            <p style="color: #7f8c8d; margin: 0; font-size: 0.9rem;">
-                Completa la valutazione basandoti sulle osservazioni effettuate
-            </p>
+    st.markdown(f"""
+    <div class="brand">
+        {logo_element_html}
+        <div class="brand-text-container">
+            <div class="brand-title">Valutazione Finale</div>
+            <div class="brand-sub">Valuta le manifestazioni osservate durante l'intervista</div>
         </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("")
+    </div>
+    """, unsafe_allow_html=True)
 
 
 def _render_info_box(mode: str, current_item: TALDItem):
-    """Renderizza info box iniziale differenziato per modalità."""
+    """Info box differenziato per modalità."""
     if mode == "guided":
         st.info(f"""
         **📚 Modalità Guidata**
@@ -241,94 +258,117 @@ def _render_info_box(mode: str, current_item: TALDItem):
         1. **Identificare** quale item TALD hai osservato
         2. **Valutare** il grado di severità (0-4) manifestato
         """)
-    
-    st.markdown("")
 
 
-def _render_item_selector(tald_items: List[TALDItem]) -> Optional[int]:
+def _render_dynamic_grade_selector(item: Optional[TALDItem]) -> int:
     """
-    Renderizza dropdown con ricerca per selezione item (modalità esplorativa).
+    Rendering dinamico della scala 0–4 in funzione dell'item selezionato.
     
-    Implementa RF_6: dropdown con funzionalità ricerca/filtro.
-    """
-    # Prepara opzioni per selectbox
-    item_options = {
-        f"Item #{item.id}: {item.title} ({item.type})": item.id
-        for item in tald_items
-    }
-    
-    # Aggiungi opzione vuota
-    item_options = {"-- Seleziona item --": None, **item_options}
-    
-    selected_label = st.selectbox(
-        "Cerca e seleziona l'item manifestato:",
-        options=list(item_options.keys()),
-        index=0,
-        key="item_selector",
-        help="Inizia a digitare per filtrare tra i 30 item TALD disponibili"
-    )
-    
-    selected_id = item_options[selected_label]
-    
-    # Mostra dettagli item selezionato
-    if selected_id:
-        selected_item = next(item for item in tald_items if item.id == selected_id)
-        
-        with st.expander(f"📖 Dettagli {selected_item.title}"):
-            st.markdown(f"**Tipo:** {selected_item.type.capitalize()}")
-            st.markdown(f"**Descrizione:**")
-            st.markdown(selected_item.description)
-    
-    return selected_id
+    - Se l'item è noto (guided o exploratory con item selezionato):
+      usa label e descrizioni specifiche dell'item.
+    - Se l'item non è disponibile, usa etichette generiche TALD.
 
+    Ritorna il grado selezionato (int).
+    """
 
-def _render_grade_selector(current_item: Optional[TALDItem]) -> Optional[int]:
-    """
-    Renderizza selezione grado con radio buttons e legend.
-    
-    Args:
-        current_item (TALDItem | None): Item corrente (solo in modalità guidata)
-    """
-    # Radio buttons con Streamlit nativo
-    grade = st.radio(
+    # Preparazione opzioni radio
+    options = []
+    format_map = {}
+
+    for g in range(5):
+        if item:
+            # Estrae il nome del livello dal campo graduation dell'item
+            label = _extract_grade_label_from_item(item, g)
+            option_label = f"{g} – {label}"
+        else:
+            # Fallback a etichette generiche
+            option_label = f"{g} – {_get_generic_grade_label(g)}"
+
+        options.append(option_label)
+        format_map[option_label] = g
+
+    # Radio button con etichette già formattate
+    selected_label = st.radio(
         "Seleziona il grado osservato:",
-        options=[0, 1, 2, 3, 4],
-        format_func=lambda x: f"{x} - {_get_generic_grade_label(x)}",
-        horizontal=True,
-        key="grade_selector",
-        help="0 = Assente, 1 = Minimo, 2 = Lieve, 3 = Moderato, 4 = Severo"
+        options=options,
+        index=None,
+        key="eval_grade_selector",
+        help="Scegli il livello che più rappresenta la manifestazione osservata"
     )
-    
-    # Legend con descrizioni specifiche (se item noto)
-    if current_item:
-        st.markdown(f"""
-        <div class="grade-legend">
-            <h4>Criteri specifici per {current_item.title}:</h4>
-            <ul>
-                <li><strong>0:</strong> {current_item.get_grade_description(0)}</li>
-                <li><strong>1:</strong> {current_item.get_grade_description(1)}</li>
-                <li><strong>2:</strong> {current_item.get_grade_description(2)}</li>
-                <li><strong>3:</strong> {current_item.get_grade_description(3)}</li>
-                <li><strong>4:</strong> {current_item.get_grade_description(4)}</li>
-            </ul>
-        </div>
-        """, unsafe_allow_html=True)
+
+    if selected_label is None:
+        selected_grade = None
     else:
-        # Legend generica (modalità esplorativa)
+        selected_grade = format_map[selected_label]
+
+
+    # Mostra legenda sotto il selettore
+    if item:
+        # Costruzione dinamica della lista descrizioni basata sul JSON dell'item
+        lines = []
+        for g in range(5):
+            desc = item.get_grade_description(g)
+            desc_text = desc if desc else "Descrizione non disponibile"
+            lines.append(f"<li><strong>{g}:</strong> {desc_text}</li>")
+
+        legend_html = (
+            "<div class='grade-legend'>"
+            "<h4>Criteri specifici:</h4>"
+            "<ul>" + "".join(lines) + "</ul>"
+            "</div>"
+        )
+        st.markdown(legend_html, unsafe_allow_html=True)
+
+    else:
+        # Legend generica, usata solo se item non selezionato (exploratory pre-selezione)
         st.info("""
         **Scala TALD standard:**
         - **0**: Disturbo non presente
-        - **1**: Dubbio/Minimo (può verificarsi anche in soggetti sani)
-        - **2**: Lieve (manifestazione presente ma non grave)
-        - **3**: Moderato (manifestazione evidente e frequente)
-        - **4**: Severo (manifestazione pervasiva e grave)
+        - **1**: Dubbio/Minimo
+        - **2**: Lieve
+        - **3**: Moderato
+        - **4**: Severo
         """)
-    
-    return grade
+
+    return selected_grade
+
+
+def _extract_grade_label_from_item(item: TALDItem, grade: int) -> str:
+    """
+    Estrae il "nome" del livello di gravità dagli item TALD.
+
+    I campi graduation nel JSON hanno struttura:
+    "2": "Lieve: tendenza alla deviazione del tema..."
+
+    Da qui estraggo:
+    - prima della ':' se esiste
+    - altrimenti prima del primo '.', come fallback
+    - se non trovato, restituisco stringa ripulita e capitalizzata
+    """
+
+    try:
+        raw = item.graduation.get(str(grade)) if hasattr(item, "graduation") else None
+
+        if not raw:
+            return _get_generic_grade_label(grade)
+
+        if ":" in raw:
+            return raw.split(":", 1)[0].strip().capitalize()
+
+        if "." in raw:
+            return raw.split(".", 1)[0].strip().capitalize()
+
+        return raw.strip().capitalize()
+
+    except Exception:
+        # Protezione in caso di errore inatteso nella struttura del JSON
+        return _get_generic_grade_label(grade)
 
 
 def _get_generic_grade_label(grade: int) -> str:
-    """Restituisce label generica per grado."""
+    """
+    Label standard TALD per la scala 0–4.
+    """
     labels = {
         0: "Assente",
         1: "Minimo",
@@ -339,94 +379,52 @@ def _get_generic_grade_label(grade: int) -> str:
     return labels.get(grade, "")
 
 
-def _handle_evaluation_submit(
-    selected_item_id: Optional[int],
-    selected_grade: Optional[int],
-    notes: str,
-    mode: str,
-    tald_items: List[TALDItem]
-) -> Optional[UserEvaluation]:
-    """
-    Gestisce submit della valutazione con validazione.
-    
-    Usa EvaluationService per validare e creare UserEvaluation.
-    """
-    try:
-        if mode == "guided":
-            # Modalità guidata: solo grado
-            user_eval = EvaluationService.create_guided_evaluation(
-                grade=selected_grade,
-                notes=notes
-            )
-        else:
-            # Modalità esplorativa: item + grado
-            if selected_item_id is None:
-                raise EvaluationValidationError(
-                    "Devi selezionare un item TALD dalla lista"
-                )
-            
-            user_eval = EvaluationService.create_exploratory_evaluation(
-                item_id=selected_item_id,
-                grade=selected_grade,
-                items=tald_items,
-                notes=notes
-            )
-        
-        # Validazione riuscita
-        st.success("✅ Valutazione confermata! Generazione report in corso...")
-        return user_eval
-    
-    except EvaluationValidationError as e:
-        st.error(f"❌ **Errore di validazione**\n\n{str(e)}")
-        return None
-    
-    except Exception as e:
-        st.error(f"❌ **Errore imprevisto**\n\n{str(e)}")
-        return None
-
-
 def _render_evaluation_sidebar(
     conversation: ConversationHistory,
     current_item: TALDItem,
     mode: str
-):
-    """Renderizza sidebar con riepilogo conversazione."""
+) -> Optional[str]:
+    """
+    Sidebar con riepilogo coerente alle altre view.
+
+    Mostra:
+    - Statistiche conversazione
+    - Info item (solo in modalità guidata)
+    - Suggerimenti
+    - Bottone back con warning inline
+    
+    Returns:
+        "RESET": torna a selezione modalità
+        "BACK_TO_ITEMS": torna a selezione item (guided)
+        None: nessuna azione
+    """
     with st.sidebar:
+
         st.markdown("## 📊 Riepilogo Intervista")
-        
-        # Statistiche conversazione
+
         col1, col2 = st.columns(2)
-        
         with col1:
             st.metric("Messaggi", conversation.get_message_count())
-        
         with col2:
             st.metric("Durata", f"{conversation.get_duration_minutes()} min")
-        
-        st.markdown(f"""
-        **Dettagli:**
-        - Tue domande: {len(conversation.get_user_messages())}
-        - Risposte: {len(conversation.get_assistant_messages())}
-        - Parole: {conversation.get_total_words()}
-        """)
-        
+
+        st.caption(f"Parole scambiate: {conversation.get_total_words()}")
+
         st.markdown("---")
-        
-        # Info item (solo guidata)
+
         if mode == "guided":
             st.markdown("## 📋 Item Simulato")
-            st.info(f"""
-            **{current_item.id}. {current_item.title}**
-            
-            Tipo: {current_item.type.capitalize()}
-            """)
-            
-            with st.expander("📖 Criteri"):
+            st.info(f"**{current_item.id}. {current_item.title}**\n\nTipo: {current_item.type.capitalize()}")
+
+            with st.expander("📖 Criteri diagnostici"):
                 st.markdown(current_item.criteria)
-        
+
+        else:
+            st.markdown("## 📋 Obiettivo")
+            st.warning("**Identifica l'item TALD** e valutane il grado di manifestazione.")
+
         st.markdown("---")
-        
-        # Suggerimenti
+
         st.markdown("## 💡 Suggerimenti")
         st.markdown("""
         - Rivedi **mentalmente** la conversazione
@@ -435,29 +433,55 @@ def _render_evaluation_sidebar(
         - Sii **onesto** nella valutazione
         """)
 
+        # BACK BUTTON CON WARNING INLINE
+        st.markdown("---")
+        
+        # Controlla se c'è warning attivo
+        if st.session_state.get("confirm_back_from_eval"):
+            return _render_sidebar_back_warning(mode)
+        
+        # Bottone normale
+        if mode == "guided":
+            if st.button("← Torna a Selezione Item", use_container_width=True):
+                st.session_state.confirm_back_from_eval = True
+                st.rerun()
+        else:
+            if st.button("← Torna a Selezione Modalità", use_container_width=True):
+                st.session_state.confirm_back_from_eval = True
+                st.rerun()
+    
+    return None
 
-def show_evaluation_confirmation_dialog() -> bool:
+
+def _render_sidebar_back_warning(mode: str) -> Optional[str]:
     """
-    Mostra dialog di conferma prima di sottomettere valutazione.
+    Renderizza il warning di conferma DENTRO la sidebar.
     
     Returns:
-        bool: True se utente conferma
+        "RESET" o "BACK_TO_ITEMS" se confermato
+        None se annullato
     """
     st.warning("""
-    ⚠️ **Conferma valutazione**
+    ⚠️ **Attenzione**
     
-    Una volta confermata, non potrai più modificare la tua valutazione.
-    Sei sicuro di voler procedere?
+    Se torni indietro perderai la valutazione corrente.
+    Confermi?
     """)
-    
+
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("❌ Rivedi", use_container_width=True):
-            return False
+        if st.button("❌ Annulla", use_container_width=True, key="cancel_back_eval"):
+            del st.session_state["confirm_back_from_eval"]
+            st.rerun()
     
     with col2:
-        if st.button("✅ Conferma", use_container_width=True, type="primary"):
-            return True
+        if st.button("✅ Conferma", use_container_width=True, type="primary", key="confirm_back_eval"):
+            del st.session_state["confirm_back_from_eval"]
+            
+            if mode == "guided":
+                return "BACK_TO_ITEMS"
+            else:
+                return "RESET"
     
-    return False
+    return None

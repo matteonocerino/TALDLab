@@ -15,6 +15,7 @@ import html
 import time
 import sys
 import google.generativeai as genai
+
 from typing import Optional
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -32,7 +33,7 @@ def _submit_callback():
         st.session_state.pending_prompt = st.session_state.chat_text_area.strip()
         st.session_state.chat_text_area = ""
 
-        
+
 def _force_rebuild_llm_service(llm_service):
     """
     HARD RESET completo dell'LLM Service per recupero da disconnessione rete.
@@ -128,12 +129,29 @@ def render_chat_interface(
 
     # Controlla se l'utente vuole tornare indietro
     if st.session_state.get("reset_requested"):
+        for key in ("llm_error", "pending_prompt", "chat_session", "frozen_duration_during_retry"):
+            if key in st.session_state:
+                del st.session_state[key]
+
+        if "confirm_terminate_pending" in st.session_state:
+            del st.session_state["confirm_terminate_pending"]
+
         del st.session_state["reset_requested"]
+
         return "reset"
-    
+
     if st.session_state.get("back_to_item_selection"):
+        for key in ("llm_error", "pending_prompt", "chat_session", "frozen_duration_during_retry"):
+            if key in st.session_state:
+                del st.session_state[key]
+
+        if "confirm_terminate_pending" in st.session_state:
+            del st.session_state["confirm_terminate_pending"]
+
         del st.session_state["back_to_item_selection"]
+
         return "back_to_items"
+
 
     # --- Visualizzazione Errori (IN ALTO) ---
     if "llm_error" in st.session_state:
@@ -215,22 +233,34 @@ def render_chat_interface(
                     user_message=prompt
                 )
 
-                if time.time() - start_time > 15:
-                    raise LLMTimeoutError("Timeout forzato.")
-                
-                # Rimuovi il tempo congelato se il retry ha avuto successo
-                if "frozen_duration_during_retry" in st.session_state:
-                    # Calcola quanto tempo è passato durante i retry falliti
-                    # e aggiusta session_start per compensare
-                    frozen = st.session_state.frozen_duration_during_retry
-                    actual = conversation.get_duration_minutes()
-                    lost_time = actual - frozen  # minuti persi durante i retry
-    
-                    # Sposta session_start indietro per compensare il tempo perso
-                    conversation.session_start = conversation.session_start + timedelta(minutes=lost_time)
-    
-                    del st.session_state["frozen_duration_during_retry"]
+                elapsed_time = time.time() - start_time # Tempo impiegato per generare QUESTA risposta
 
+                # Se stiamo recuperando da un errore (Riprova), dobbiamo "cucire" il tempo
+                # ignorando i minuti passati nell'errore.
+                if "frozen_duration_during_retry" in st.session_state:
+                    
+                    # 1. Recuperiamo quanto doveva essere il tempo prima di questa generazione
+                    frozen_minutes = st.session_state["frozen_duration_during_retry"]
+                    
+                    # 2. Calcoliamo quanto tempo di generazione (in minuti) abbiamo appena speso
+                    elapsed_minutes = elapsed_time / 60.0
+                    
+                    # 3. Il nuovo "Totale Ideale" dovrebbe essere: Vecchio Totale + Tempo Generazione
+                    target_total_minutes = frozen_minutes + elapsed_minutes
+                    
+                    # 4. Vediamo quanto segna l'orologio "reale" (che include il tempo perso nell'errore)
+                    current_real_minutes = conversation.get_duration_minutes()
+                    
+                    # 5. Calcoliamo il tempo "morto" da sottrarre
+                    dead_time_minutes = current_real_minutes - target_total_minutes
+                    
+                    # 6. Spostiamo l'inizio della sessione in avanti per nascondere il tempo morto
+                    if dead_time_minutes > 0:
+                         conversation.session_start += timedelta(minutes=dead_time_minutes)
+        
+                    # Pulizia
+                    del st.session_state["frozen_duration_during_retry"]
+                
             except Exception as e:
                 # Rimuovi la risposta assistant incompleta (se presente)
                 if conversation.messages and not conversation.messages[-1].is_user_message():
@@ -240,7 +270,11 @@ def render_chat_interface(
                 if conversation.messages and conversation.messages[-1].is_user_message():
                     conversation.messages.pop()
 
-                # 2. Classifica errore
+                # === CALCOLO MINUTI CONGELATI ===
+                # Salviamo i minuti validi attuali (che ora puntano all'ultimo messaggio di successo)
+                frozen_duration = conversation.get_duration_minutes()
+
+                # Classifica errore
                 error_type = "Generic"
                 error_message = str(e)
                 
@@ -252,15 +286,15 @@ def render_chat_interface(
                     error_type = "Connection"
                     error_message = "Errore di rete. Verifica la connessione e riprova."
                 
-                # 3. Salva stato errore
+                # Salva stato errore
                 st.session_state.llm_error = {
                     "type": error_type,
                     "message": error_message,
                     "last_prompt": prompt,
-                    "frozen_duration": conversation.get_duration_minutes() 
+                    "frozen_duration": frozen_duration # Salviamo il tempo "congelato"
                 }
                 
-                # 4. Distruggi sessione corrotta
+                # Distruggi sessione corrotta
                 if "chat_session" in st.session_state:
                     del st.session_state["chat_session"]
                 
@@ -272,7 +306,11 @@ def render_chat_interface(
     st.markdown("---")
 
     # --- Area Input ---
-    input_disabled = st.session_state.is_processing or "llm_error" in st.session_state
+    input_disabled = (
+    st.session_state.is_processing or 
+    "llm_error" in st.session_state or
+    st.session_state.get("confirm_terminate_pending", False)
+)
 
     st.text_area(
         "Scrivi qui la tua domanda...",
@@ -289,7 +327,7 @@ def render_chat_interface(
         terminate = st.button(
             "⏹️ Termina", 
             use_container_width=True,
-            disabled=st.session_state.is_processing
+            disabled=st.session_state.is_processing or st.session_state.get("confirm_terminate_pending", False)
         )
         
     with col2:
@@ -300,11 +338,42 @@ def render_chat_interface(
             on_click=_submit_callback
         )
 
+    # LOGICA TERMINATE (dopo aver creato il bottone)
     if terminate:
         if conversation.get_message_count() < 2:
             st.warning("⚠️ Conduci almeno uno scambio domanda–risposta prima di terminare.")
         else:
-            return True
+            # Salva stato "conferma termina" per disabilitare input
+            st.session_state.confirm_terminate_pending = True
+            st.rerun()
+
+    # MOSTRA WARNING DI CONFERMA (dopo i bottoni, con spaziatura)
+    if st.session_state.get("confirm_terminate_pending", False): 
+        st.markdown("---")
+        st.markdown("") 
+    
+        _, center_col, _ = st.columns([1, 3, 1])
+    
+        with center_col:
+            with st.container(border=True):
+                st.warning("""
+                ⚠️ **Stai per terminare l'intervista**
+            
+                Una volta terminata, non potrai più interagire con il paziente.
+                Sei sicuro di aver raccolto abbastanza informazioni?
+                """)
+
+                b1, b2 = st.columns([1, 1])
+            
+                with b1:
+                    if st.button("❌ Annulla", use_container_width=True, key="btn_cancel_terminate"):
+                        del st.session_state["confirm_terminate_pending"]
+                        st.rerun()
+                
+                with b2:
+                    if st.button("✅ Conferma e Valuta", use_container_width=True, type="primary", key="btn_confirm_terminate"):
+                        del st.session_state["confirm_terminate_pending"]
+                        return True
 
     return False
 
@@ -337,7 +406,7 @@ def _handle_llm_error_display(conversation, tald_item, grade, llm_service, mode)
                 # Genera il contenuto SOLO al momento del click, non prima
                 st.download_button(
                     label="💾 Salva Trascrizione",
-                    data=_generate_transcript_content(conversation, tald_item, grade, mode),
+                    data=_generate_transcript_content(conversation, tald_item, mode),
                     file_name=f"TALD_Trascrizione_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
                     mime="text/plain",
                     use_container_width=True,
@@ -349,34 +418,34 @@ def _handle_llm_error_display(conversation, tald_item, grade, llm_service, mode)
                 if st.button("🔄 Riprova invio messaggio", use_container_width=True, type="primary"):
                 
                     try:
-                        # SALVA il frozen_duration PRIMA di rimuovere l'errore
-                        saved_frozen_duration = st.session_state.llm_error.get("frozen_duration")
+                        # Recupera il tempo congelato
+                        saved_frozen_duration = st.session_state.llm_error.get("frozen_duration", conversation.get_duration_minutes())
 
-                        # 1. Ricostruisce COMPLETAMENTE sessione + modello LLM
+                       # Chiama la funzione helper 
                         new_session = _rebuild_session_with_history(
                             llm_service, tald_item, grade, conversation
-                            )
+                        )
                     
-                        # 2. Aggiorna la sessione
+                        # Aggiorna la sessione
                         st.session_state.chat_session = new_session
                     
-                        # 3. Rimette il prompt in coda
+                        # Rimette il prompt in coda
                         st.session_state.pending_prompt = last_prompt
 
-                        # 4. Salva il tempo congelato per usarlo durante il loading
+                        # IMPORTANTE: Passa il tempo congelato alla fase successiva
                         st.session_state.frozen_duration_during_retry = saved_frozen_duration
                     
-                        # 5. Rimuove l'errore
+                        # Rimuove l'errore
                         del st.session_state["llm_error"]
                     
-                        # 6. Riavvia
+                        # Riavvia
                         st.rerun()
                     
                     except Exception as rebuild_error:
                         st.error(f"❌ Impossibile ricostruire la sessione: {rebuild_error}")
 
 
-def _generate_transcript_content(conversation, tald_item, grade, mode):
+def _generate_transcript_content(conversation, tald_item, mode):
     """Genera il testo della trascrizione in memoria."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
@@ -449,12 +518,14 @@ def render_chat_sidebar(conversation: ConversationHistory, tald_item: TALDItem, 
         st.markdown("## 📊 Monitoraggio")
         col1, col2 = st.columns(2)
 
-        # Usa il tempo congelato se c'è un errore O se siamo in retry
+        # Se c'è un errore attivo, mostriamo il tempo congelato (l'ultimo valido)
         if "llm_error" in st.session_state and "frozen_duration" in st.session_state.llm_error:
             display_minutes = st.session_state.llm_error["frozen_duration"]
+        # Se stiamo riprovando, mostriamo ancora il tempo congelato finché non finisce
         elif "frozen_duration_during_retry" in st.session_state:
             display_minutes = st.session_state.frozen_duration_during_retry
         else:
+            # Altrimenti tempo normale
             display_minutes = conversation.get_duration_minutes()
 
         with col1: st.metric("Messaggi", conversation.get_message_count())
@@ -481,9 +552,37 @@ def render_chat_sidebar(conversation: ConversationHistory, tald_item: TALDItem, 
         """)
 
         st.markdown("---")
-        if mode == "guided":
-            if st.button("← Torna a Selezione Item", use_container_width=True):
-                st.session_state.back_to_item_selection = True
+
+        if st.session_state.get("confirm_back_chat"):
+            st.warning("""
+            ⚠️ **Attenzione**
+
+            Tornando indietro perderai l’intervista corrente.
+            Confermi?
+            """)
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                if st.button("❌ Annulla", use_container_width=True, key="cancel_back_chat"):
+                    del st.session_state["confirm_back_chat"]
+                    st.rerun()
+
+            with col2:
+                if st.button("✅ Conferma", use_container_width=True, key="confirm_back_chat_ok"):
+                    del st.session_state["confirm_back_chat"]
+                    if mode == "guided":
+                        st.session_state.back_to_item_selection = True
+                    else:
+                        st.session_state.reset_requested = True
+                    st.rerun()
+
         else:
-            if st.button("← Torna a Selezione Modalità", use_container_width=True):
-                st.session_state.reset_requested = True
+            if mode == "guided":
+                if st.button("← Torna a Selezione Item", use_container_width=True):
+                    st.session_state["confirm_back_chat"] = True
+                    st.rerun()
+            else:
+                if st.button("← Torna a Selezione Modalità", use_container_width=True):
+                    st.session_state["confirm_back_chat"] = True
+                    st.rerun()

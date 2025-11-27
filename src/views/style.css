@@ -188,6 +188,58 @@ hr {
     filter: brightness(1.1) !important;
 }
 
+[data-testid="stHorizontalBlock"] > div:nth-child(1) button[kind="secondary"] {
+    background-color: #27ae60 !important;
+    color: white !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    border: none !important;
+    transition: filter 0.2s ease-in-out;
+}
+
+[data-testid="stHorizontalBlock"] > div:nth-child(1) button[kind="secondary"]:hover {
+    filter: brightness(1.1) !important;
+}
+
+[data-testid="stHorizontalBlock"] > div:nth-child(2) button[kind="primary"] {
+    background-color: #e67e22 !important;
+    color: white !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    border: none !important;
+    transition: filter 0.2s ease-in-out;
+}
+
+[data-testid="stHorizontalBlock"] > div:nth-child(2) button[kind="primary"]:hover {
+    filter: brightness(1.1) !important;
+}
+
+button[key="cancel_back_eval"] {
+    background-color: #27ae60 !important;
+    color: white !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    border: none !important;
+    transition: filter 0.2s ease-in-out;
+}
+
+button[key="cancel_back_eval"]:hover {
+    filter: brightness(1.1) !important;
+}
+
+button[key="confirm_back_eval"] {
+    background-color: #e67e22 !important;
+    color: white !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    border: none !important;
+    transition: filter 0.2s ease-in-out;
+}
+
+button[key="confirm_back_eval"]:hover {
+    filter: brightness(1.1) !important;
+}
+
 /* 8. STILI SPECIFICI PER VIEW */
 .item-container {
     border-bottom: 1px solid var(--card-border);
@@ -295,4 +347,31 @@ hr {
         transform: scale(1); 
         opacity: 1;
     }
+}
+
+/* 11. FIX SELECTBOX + GRADE LEGEND */
+/* Forza cursore a freccia su tutti i discendenti dello selectbox */
+.stSelectbox * {
+    cursor: pointer !important;
+}
+
+/* Evita caret testo nei componenti contenteditable usati da Streamlit */
+.stSelectbox [contenteditable="true"] {
+    cursor: pointer !important;
+    caret-color: transparent !important;
+}
+
+.grade-legend {
+    background: var(--info-box-bg);
+    border-left: 4px solid #3498db;
+    padding: 0.9rem;
+    border-radius: 6px;
+    margin-top: 0.8rem;
+}
+
+.grade-legend ul {
+    margin: 0;
+    padding-left: 1rem;
+    line-height: 1.6;
+    font-size: 0.9rem;
 }

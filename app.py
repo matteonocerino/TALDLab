@@ -12,6 +12,7 @@ Anno Accademico: 2025/2026
 
 import streamlit as st
 import random
+import time
 from pathlib import Path
 
 # Import Models
@@ -22,7 +23,7 @@ from src.models.evaluation import GroundTruth
 
 # Import Services
 from src.services.configuration_service import ConfigurationService, ConfigurationError
-from src.services.llm_service import LLMService
+from src.services.llm_service import LLMService, LLMTimeoutError, LLMConnectionError
 from src.services.conversation_manager import ConversationManager
 from src.services.evaluation_service import EvaluationService
 from src.services.comparison_engine import ComparisonEngine
@@ -169,11 +170,13 @@ def handle_mode_selection():
     
     elif selected_mode == "exploratory":
         random_item = random.choice(st.session_state.tald_items)
+
+        random_grade = random.randint(1, 4)
         
         st.session_state.session.start_exploratory_mode(
             item_id=random_item.id,
             item_title=random_item.title,
-            grade=random_item.default_grade
+            grade=random_grade
         )
         
         st.session_state.current_item = random_item
@@ -198,10 +201,13 @@ def handle_item_selection():
     # Caso 2: L'utente ha selezionato e confermato un item
     elif selected_item_or_action:
         selected_item = selected_item_or_action
+
+        random_grade = random.randint(1, 4)
+
         st.session_state.session.set_selected_item(
             item_id=selected_item.id,
             item_title=selected_item.title,
-            grade=selected_item.default_grade
+            grade=random_grade
         )
         
         st.session_state.current_item = selected_item
@@ -209,7 +215,6 @@ def handle_item_selection():
         st.rerun()
 
     # Caso 3: Nessuna azione completata, la view continua a essere renderizzata
-    # (non c'è bisogno di un 'else', la funzione termina e Streamlit continua)
 
 
 def handle_interview():
@@ -267,38 +272,126 @@ def handle_evaluation():
         conversation=st.session_state.conversation,
         mode=ground_truth.mode
     )
+
+    # Torna a selezione modalità (esplorativa)
+    if user_evaluation == "RESET":
+        reset_application()
+        st.rerun()
     
-    if user_evaluation == "BACK":
-        st.session_state.session.phase = SessionPhase.INTERVIEW
+    # Torna a selezione item (guidata)
+    elif user_evaluation == "BACK_TO_ITEMS":
+        st.session_state.session.phase = SessionPhase.ITEM_SELECTION
+        st.session_state.conversation.clear()  
+        if 'chat_session' in st.session_state:  
+            del st.session_state['chat_session']
+        if 'current_item' in st.session_state: 
+            del st.session_state['current_item']
         st.rerun()
     
     elif user_evaluation:
         try:
+            # 1. Confronto con ground truth
             comparison_result = ComparisonEngine.compare(
                 user_evaluation=user_evaluation,
                 ground_truth=ground_truth
             )
             
-            report = st.session_state.report_generator.generate_report(
-                ground_truth=ground_truth,
-                user_evaluation=user_evaluation,
-                result=comparison_result,
-                conversation=st.session_state.conversation,
-                tald_item=current_item
-            )
+            st.markdown("")
+           # 2. Generazione report con Status Bar animata
+            with st.status("🧠 Analisi clinica in corso...", expanded=True) as status:
+                try:
+                    st.write("🔍 Analisi della conversazione...")
+                    time.sleep(0.8)
+                    
+                    st.write("🩺 Consultazione Paziente Virtuale (Gemini)...")
+                    report = st.session_state.report_generator.generate_report(
+                        ground_truth=ground_truth,
+                        user_evaluation=user_evaluation,
+                        result=comparison_result,
+                        conversation=st.session_state.conversation,
+                        tald_item=current_item
+                    )
+                    
+                    st.write("📊 Calcolo punteggi e metriche...")
+                    time.sleep(0.6)  
+
+                    st.write("📄 Formattazione report finale...")
+                    time.sleep(0.5)
+                    
+                    # Aggiorna stato finale SUCCESSO
+                    status.update(label="✅ Report generato con successo!", state="complete", expanded=False)
+                    time.sleep(0.8)
+                    
+                except LLMTimeoutError as e:
+                    # SBLOCCO IL BOTTONE PER RIPROVARE
+                    st.session_state.eval_submitting = False
+                    
+                    st.session_state.eval_message_type = "error"
+                    st.session_state.eval_message_icon = "⏱️"
+                    st.session_state.eval_error_message = f"""
+                    **Timeout durante la generazione del report**
+                    
+                    {str(e)}
+                    
+                    Il sistema non ha ricevuto risposta entro i tempi previsti.
+                    Puoi riprovare cliccando nuovamente "Conferma Valutazione".
+                    """
+                    st.rerun()  
+                
+                except LLMConnectionError as e:
+                    # SBLOCCO IL BOTTONE PER RIPROVARE
+                    st.session_state.eval_submitting = False
+
+                    st.session_state.eval_message_type = "error"
+                    st.session_state.eval_message_icon = "🌐"
+                    st.session_state.eval_error_message = f"""
+                    **Errore di connessione**
+                    
+                    {str(e)}
+                    
+                    Possibili cause:
+                    - Limite di richieste Gemini superato (attendi 1 minuto)
+                    - Quota giornaliera esaurita
+                    - Problemi di rete
+                    
+                    Puoi riprovare cliccando nuovamente "Conferma Valutazione".
+                    """
+
+                    try:
+                        # 1. Ricrea il servizio LLM
+                        new_llm_service = LLMService(st.session_state.config)
+                        st.session_state.llm_service = new_llm_service
+                        
+                        # 2. Aggiorna i servizi che dipendono da lui (ReportGenerator)
+                        st.session_state.report_generator = ReportGenerator(new_llm_service)
+                        
+                    except Exception:
+                        pass
+
+                    st.rerun()
             
+            # 3. Salva report e procedi
             st.session_state.session.submit_evaluation(user_evaluation, comparison_result)
             st.session_state.report = report
             
             st.rerun()
         
         except Exception as e:
-            st.error(f"""
-            ❌ **Errore durante la generazione del report**
-            
-            {str(e)}
-            """)
+            # SBLOCCO IL BOTTONE PER RIPROVARE
+            st.session_state.eval_submitting = False
 
+            st.session_state.eval_message_type = "error"
+            st.session_state.eval_message_icon = "❌"
+            st.session_state.eval_error_message = f"""
+            **Errore imprevisto dell'applicazione**
+            
+            Si è verificato un problema imprevisto.
+            Dettagli: {str(e)}
+            
+            Prova a cliccare di nuovo o ricarica la pagina.
+            """
+
+            st.rerun() 
 
 def handle_report():
     """

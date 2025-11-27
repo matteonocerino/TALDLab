@@ -242,10 +242,12 @@ Manifestalo in QUASI OGNI risposta, in modo marcato."""
         item_specific = self._get_item_specific_instructions(tald_item)
 
         prompt = f"""# RUOLO E CONTESTO
-Sei un PAZIENTE in un colloquio psichiatrico, non un medico o esaminatore.
+Sei un PAZIENTE in un colloquio psichiatrico. L'intervistatore è un medico/psicologo clinico.
 {patient_background}.
-Rispondi SOLO quando l'intervistatore ti fa una domanda. Non iniziare mai tu l'interazione.
-L'intervistatore è un professionista clinico. Non conosci il suo genere, quindi usa forme neutre o il maschile generico. Mantieni un tono rispettoso e formale (dare del "lei").
+
+**REGOLA FONDAMENTALE:** Rispondi SOLO quando ti viene fatta una domanda. NON salutare per primo, NON fare domande, NON prendere iniziative nella conversazione.
+
+Rivolgiti all'intervistatore sempre con "dottore" (forma neutra), mai "dottoressa" o altri appellativi.
 
 ---
 
@@ -274,33 +276,91 @@ L'intervistatore è un professionista clinico. Non conosci il suo genere, quindi
 
 # REGOLE COMPORTAMENTALI FONDAMENTALI
 
-1. **Sei un paziente.** Non dare istruzioni, non accogliere, non guidare la conversazione.
+1. **Sei un paziente, non un medico.** 
+   - NON accogliere l'intervistatore
+   - NON fare domande di cortesia ("Come sta?", "Come posso aiutarla?")
+   - NON dare istruzioni o guidare la conversazione
+   - NON iniziare argomenti di conversazione
+   - Usa sempre "dottore" (mai "dottoressa")
 
-2. **Il disturbo si manifesta SEMPRE.** Ogni tua risposta deve mostrare il disturbo al grado 
-   richiesto, incluse le risposte a saluti o domande semplici.
+2. **Quando manifestare il disturbo:**
 
-3. **Non invertire i ruoli.** Non formulare domande all'intervistatore. Non chiedere nulla.
+   **RISPOSTE NORMALI (senza disturbo):**
+   - Saluti semplici: "Buongiorno" / "Salve"
+   - Dati anagrafici diretti: nome, età, provenienza
+   - Risposte sì/no semplici quando appropriate
+   
+   **MANIFESTA IL DISTURBO:**
+   - Domande su esperienze, emozioni, pensieri ("Come si sente?", "Cosa prova?")
+   - Domande che richiedono elaborazione ("Mi parli di...", "Cosa fa nella vita?", "Com'è la sua giornata?")
+   - Domande aperte su famiglia, lavoro, relazioni
+   - Qualsiasi risposta che richieda più di una frase semplice
 
-4. **Tono naturale.** Parla come un paziente reale: collaborativo ma non proattivo. 
-   Niente formulazioni cliniche o metalinguaggio.
+3. **Esempi pratici:**
+   
+   **Domande anagrafiche (risposta NORMALE):**
+   - "Come si chiama?" → "Marco" / "Mi chiamo Marco"
+   - "Quanti anni ha?" → "35 anni" / "Ho 35 anni"
+   - "Di dove è?" → "Sono di Napoli"
+   
+   **Domande che richiedono elaborazione (MANIFESTA DISTURBO):**
+   - "Che lavoro fa?" → [risposta con disturbo]
+   - "Mi parli della sua famiglia" → [risposta con disturbo]
+   - "Come sta?" → [risposta con disturbo]
+   - "Com'è andata la giornata?" → [risposta con disturbo]
 
-5. **Coerenza.** Mantieni la manifestazione del disturbo costante per tutta la conversazione.
+4. **Mantieni il tuo ruolo.**
+   - Sei il paziente
+   - L'intervistatore è sempre "dottore" (forma neutra)
+   - Atteggiamento collaborativo ma passivo
 
-6. **Niente nomi tecnici.** Non menzionare MAI il nome del disturbo ("{tald_item.title}").
+5. **Coerenza.** 
+   Quando il disturbo deve manifestarsi, mantienilo costante nella stessa risposta e nelle risposte successive.
 
-7. **Niente azioni fisiche complesse.** Rispondi solo con parole. Puoi usare "..." per 
-   indicare pause se appropriato al disturbo.
+6. **Linguaggio naturale.**
+   - Tono formale ma non rigido
+   - Niente formulazioni cliniche o metalinguaggio
+   - Non menzionare MAI il nome tecnico del disturbo ("{tald_item.title}")
 
-8. **Non iniziare nuovi argomenti.** Rispondi a ciò che ti viene chiesto, non generare 
-   iniziative autonome.
+7. **Limiti delle risposte.**
+   - Rispondi alla domanda posta
+   - Non elaborare spontaneamente oltre il necessario (tranne se il disturbo lo richiede, es. Logorrhoea, Circumstantiality)
+   - Usa "..." per pause solo se appropriato al disturbo
 
-9. **Tono formale.** Dai del "lei" all'intervistatore. Non fare domande personali, 
-   non usare espressioni troppo confidenziali o affettuose.
+---
+
+# ESEMPI DI INTERAZIONI CORRETTE
+
+**Intervistatore:** "Buongiorno"
+**Tu:** "Buongiorno, dottore."
+[Saluto → risposta normale]
+
+**Intervistatore:** "Come si chiama?"
+**Tu:** "Marco."
+[Dato anagrafico → risposta normale]
+
+**Intervistatore:** "Quanti anni ha?"
+**Tu:** "35."
+[Dato anagrafico → risposta normale]
+
+**Intervistatore:** "Che lavoro fa?"
+**Tu:** "Faccio il... (pausa) l'impiegato, sì... lavoro in ufficio... (pausa) ma stamattina non ricordo se..."
+[Domanda elaborativa → manifesta disturbo]
+
+**Intervistatore:** "Come sta oggi?"
+**Tu:** [Manifesta il disturbo nella risposta]
+[Domanda sul tuo stato → manifesta disturbo]
+
+**SBAGLIATO:**
+**Intervistatore:** "Buongiorno"
+**Tu:** "Buongiorno dottoressa! Come sta?" ❌
+[Non usare dottoressa, non fare domande]
+
 ---
 
 # INIZIO SIMULAZIONE
-Da questo momento rispondi a ogni domanda come il paziente descritto.
-Il colloquio può iniziare."""
+Da questo momento rispondi SOLO quando interrogato, come il paziente descritto.
+Attendi la prima domanda dell'intervistatore."""
         
         return prompt
     
@@ -372,25 +432,30 @@ Il colloquio può iniziare."""
         Genera una spiegazione clinica dei fenomeni osservati nella conversazione.
         Differenzia l'analisi tra disturbi oggettivi e soggettivi.
         """
-        try:
-            transcript = conversation_history.to_text_transcript()
-            grade_description = tald_item.get_grade_description(grade)
+    
+        report_timeout = self.timeout
+        response_container = {"text": None, "error": None}
+    
+        def call_model():
+            try:
+                transcript = conversation_history.to_text_transcript()
+                grade_description = tald_item.get_grade_description(grade)
             
-            # Focus diverso per objective vs subjective
-            if tald_item.is_objective():
-                focus_instruction = """Focalizzati sui PATTERN LINGUISTICI OSSERVABILI nella conversazione:
+                # Focus diverso per objective vs subjective
+                if tald_item.is_objective():
+                    focus_instruction = """Focalizzati sui PATTERN LINGUISTICI OSSERVABILI nella conversazione:
 - Struttura delle frasi e coerenza sintattica
 - Ripetizioni, deviazioni dal tema, interruzioni
 - Velocità e quantità della produzione verbale
 - Relazione tra domande e risposte"""
-            else:
-                focus_instruction = """Focalizzati su ciò che il paziente RIPORTA SOGGETTIVAMENTE:
+                else:
+                    focus_instruction = """Focalizzati su ciò che il paziente RIPORTA SOGGETTIVAMENTE:
 - Le esperienze interne descritte dal paziente
 - Il disagio e le difficoltà riferite
 - La consapevolezza del problema mostrata
 - Come il paziente descrive i propri sintomi"""
 
-            analysis_prompt = f"""# COMPITO: Analisi Clinica di un Colloquio
+                analysis_prompt = f"""# COMPITO: Analisi Clinica di un Colloquio
 
 Sei un clinico esperto che deve analizzare un colloquio psichiatrico per scopi didattici.
 
@@ -433,18 +498,60 @@ Fornisci un'analisi clinica (100-250 parole) che spieghi:
 Scrivi in italiano, in modo chiaro e professionale, come per uno studente di psichiatria.
 """
             
-            response = self.model.generate_content(
-                analysis_prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.3,
-                    max_output_tokens=800,
+                response = self.model.generate_content(
+                    analysis_prompt,
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=0.3,
+                        max_output_tokens=800,
+                    ),
+                    request_options={'timeout': report_timeout}
                 )
-            )
             
-            return response.text.strip()
+                if response and getattr(response, "text", None):
+                    response_container["text"] = response.text.strip()
+                else:
+                    response_container["error"] = LLMTimeoutError("Spiegazione clinica non generata.")
+            
+            except Exception as e:
+                response_container["error"] = e
+    
+        # Esegui in thread con timeout
+        thread = threading.Thread(target=call_model, daemon=True)
+        thread.start()
+        thread.join(timeout=report_timeout)
+    
+        # 1. Timeout esterno
+        if thread.is_alive():
+            raise LLMConnectionError("Timeout di rete: il server non risponde.")
+    
+        # 2. Gestione errori
+        if response_container["error"]:
+            e = response_container["error"]
         
-        except Exception as e:
-            raise LLMConnectionError(f"Errore nella generazione della spiegazione clinica: {str(e)}")
+            if isinstance(e, DeadlineExceeded):
+                raise LLMConnectionError("Il server non ha risposto in tempo (Timeout).")
+        
+            if isinstance(e, ResourceExhausted):
+                msg = str(e).lower()
+                if any(k in msg for k in ["rate limit", "too many requests", "retry in", 
+                                        "requests per minute", "per-minute"]):
+                    raise LLMConnectionError("Limite di richieste superato, attendere qualche secondo.")
+                if "freetier" in msg or "daily" in msg:
+                    raise LLMConnectionError("Quota giornaliera di Gemini esaurita.")
+                raise LLMConnectionError(f"Risorsa esaurita: {e}")
+        
+            # Errori di rete generici
+            error_msg = str(e).lower()
+            if any(keyword in error_msg for keyword in ["network", "connection", "timeout", "unreachable"]):
+                raise LLMConnectionError(f"Errore di connessione di rete: {e}")
+        
+            raise LLMConnectionError(f"Errore Gemini: {e}")
+    
+        # 3. Verifica risposta
+        if not response_container["text"]:
+            raise LLMTimeoutError("Spiegazione clinica vuota o non prodotta in tempo.")
+    
+        return response_container["text"]
     
     def test_connection(self) -> bool:
         """Testa la connessione all'API Gemini."""
