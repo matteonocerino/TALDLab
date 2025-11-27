@@ -255,14 +255,16 @@ class EvaluationResult:
         Determina il livello di performance basato sul punteggio.
         
         Returns:
-            str: Livello di performance ("Eccellente", "Buono", "Sufficiente", "Insufficiente")
+            str: Livello di performance ("Eccellente", "Buono", "Sufficiente", "Parziale", "Insufficiente")
         """
         if self.score >= 90:
-            return "Eccellente"
+            return "Eccellente"      
         elif self.score >= 75:
-            return "Buono"
+            return "Buono"           
         elif self.score >= 60:
-            return "Sufficiente"
+            return "Sufficiente"    
+        elif self.score >= 40:
+            return "Migliorabile"        
         else:
             return "Insufficiente"
     

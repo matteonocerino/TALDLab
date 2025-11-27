@@ -15,7 +15,7 @@ from typing import List, Dict, Optional, Any
 from pathlib import Path
 from dotenv import load_dotenv
 
-from ..models.tald_item import TALDItem
+from src.models.tald_item import TALDItem
 
 
 class ConfigurationError(Exception):

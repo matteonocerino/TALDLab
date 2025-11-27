@@ -13,6 +13,7 @@ import base64
 import os
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from src.models.tald_item import TALDItem
 from src.models.evaluation import UserEvaluation
@@ -43,6 +44,29 @@ def render_evaluation_form(
         "BACK_TO_ITEMS" (torna a selezione item)
         None (se nessuna azione)
     """
+
+    # 1. Piazziamo l'ancora in cima assoluta
+    st.markdown('<div id="eval-top-marker" style="position: absolute; top: -100px;"></div>', unsafe_allow_html=True)
+
+    # 2. Script che salta all'ancora (Solo se non l'abbiamo già fatto in questa sessione)
+    # Usiamo una chiave specifica per questa view, così non sporchiamo app.py
+    if 'eval_view_loaded' not in st.session_state:
+        js = """
+        <script>
+            function jumpToTop() {
+                var marker = window.parent.document.getElementById("eval-top-marker");
+                if (marker) {
+                    marker.scrollIntoView({behavior: "auto", block: "start"});
+                }
+            }
+            // Raffica iniziale per vincere il rendering
+            setTimeout(jumpToTop, 50);
+            setTimeout(jumpToTop, 150);
+            setTimeout(jumpToTop, 300);
+        </script>
+        """
+        components.html(js, height=0)
+        st.session_state['eval_view_loaded'] = True
 
     # Header con logo
     _render_header(mode)
@@ -307,9 +331,23 @@ def _render_dynamic_grade_selector(item: Optional[TALDItem]) -> int:
         # Costruzione dinamica della lista descrizioni basata sul JSON dell'item
         lines = []
         for g in range(5):
-            desc = item.get_grade_description(g)
-            desc_text = desc if desc else "Descrizione non disponibile"
-            lines.append(f"<li><strong>{g}:</strong> {desc_text}</li>")
+            raw_desc = item.get_grade_description(g)
+            
+            # Separiamo "Nome Livello" da "Descrizione"
+            parts = raw_desc.split(':', 1)
+            
+            if len(parts) == 2:
+                # Caso: "Lieve: descrizione..."
+                level_name = parts[0].strip().capitalize()
+                description = parts[1].strip()
+                # Formato: 2 = **Lieve**: *descrizione*
+                line = f"<li>{g} = <b>{level_name}</b>: <i>{description}</i></li>"
+            else:
+                # Caso: "Lieve" (senza descrizione extra)
+                level_name = raw_desc.strip().capitalize()
+                line = f"<li>{g} = <b>{level_name}</b></li>"
+            
+            lines.append(line)
 
         legend_html = (
             "<div class='grade-legend'>"
@@ -318,7 +356,7 @@ def _render_dynamic_grade_selector(item: Optional[TALDItem]) -> int:
             "</div>"
         )
         st.markdown(legend_html, unsafe_allow_html=True)
-
+        
     else:
         # Legend generica, usata solo se item non selezionato (exploratory pre-selezione)
         st.info("""

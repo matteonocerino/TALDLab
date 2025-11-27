@@ -311,12 +311,9 @@ def handle_evaluation():
                         conversation=st.session_state.conversation,
                         tald_item=current_item
                     )
-                    
-                    st.write("📊 Calcolo punteggi e metriche...")
-                    time.sleep(0.6)  
 
                     st.write("📄 Formattazione report finale...")
-                    time.sleep(0.5)
+                    time.sleep(0.6)
                     
                     # Aggiorna stato finale SUCCESSO
                     status.update(label="✅ Report generato con successo!", state="complete", expanded=False)
@@ -364,6 +361,13 @@ def handle_evaluation():
                         
                         # 2. Aggiorna i servizi che dipendono da lui (ReportGenerator)
                         st.session_state.report_generator = ReportGenerator(new_llm_service)
+
+                        # Aggiorna il conversation_manager
+                        st.session_state.conversation_manager.llm_service = new_llm_service
+        
+                        # Invalida la sessione chat vecchia (perché legata al vecchio service)
+                        if 'chat_session' in st.session_state:
+                            del st.session_state['chat_session']
                         
                     except Exception:
                         pass
@@ -403,10 +407,7 @@ def handle_report():
     
     action = render_report_view(report)
     
-    if action == "download_pdf":
-        handle_pdf_download(report)
-    
-    elif action == "new_simulation":
+    if action == "new_simulation":
         reset_application()
         st.rerun()
     

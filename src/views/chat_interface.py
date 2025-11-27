@@ -13,13 +13,10 @@ import base64
 import os
 import html
 import time
-import sys
 import google.generativeai as genai
 
 from typing import Optional
 from datetime import datetime, timedelta
-from pathlib import Path
-sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
 from src.models.conversation import ConversationHistory
 from src.models.tald_item import TALDItem
@@ -116,9 +113,20 @@ def render_chat_interface(
     Returns: True se l'utente termina l'intervista, "reset" se torna indietro, False altrimenti.
     """
 
-    # 1. Inizializzazione Sessione
+    # 1. Inizializzazione Sessione 
     if "chat_session" not in st.session_state:
-        st.session_state.chat_session = llm_service.start_chat_session(tald_item, grade)
+        # Se abbiamo già messaggi nello storico, DOBBIAMO ricostruire la memoria di Gemini
+        if conversation.get_message_count() > 0:
+            try:
+                st.session_state.chat_session = _rebuild_session_with_history(
+                    llm_service, tald_item, grade, conversation
+                )
+            except Exception:
+                # Se fallisce, fallback su sessione nuova 
+                st.session_state.chat_session = llm_service.start_chat_session(tald_item, grade)
+        else:
+            # Nuova sessione pulita
+            st.session_state.chat_session = llm_service.start_chat_session(tald_item, grade)
 
     if "is_processing" not in st.session_state:
         st.session_state.is_processing = False

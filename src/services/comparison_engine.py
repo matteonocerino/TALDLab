@@ -13,7 +13,7 @@ Implementa RF_7 del RAD
 """
 
 from typing import Optional, Dict
-from ..models.evaluation import UserEvaluation, GroundTruth, EvaluationResult
+from src.models.evaluation import UserEvaluation, GroundTruth, EvaluationResult
 
 
 class ComparisonEngine:

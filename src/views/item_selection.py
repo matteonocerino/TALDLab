@@ -12,6 +12,8 @@ import streamlit as st
 from typing import Optional, List
 import base64
 import os
+import streamlit.components.v1 as components
+import time
 
 from src.models.tald_item import TALDItem
 
@@ -32,6 +34,25 @@ def render_item_selection(tald_items: List[TALDItem]) -> Optional[TALDItem]:
     """
     
     # NOTA: Lo stile di questa pagina è definito nel file globale 'src/views/style.css'.
+
+    # 1. Piazziamo un'ancora invisibile in cima alla pagina
+    st.markdown('<div id="selection-view-top" style="position: absolute; top: -150px; left: 0;"></div>', unsafe_allow_html=True)
+    
+    # 2. Script che forza il salto all'ancora 
+    js_main = """
+    <script>
+        function jumpToTop() {
+            try {
+                var marker = window.parent.document.getElementById("selection-view-top");
+                if (marker) {
+                    marker.scrollIntoView({behavior: "auto", block: "start"});
+                }
+            } catch (e) {}
+        }
+        setTimeout(jumpToTop, 100);
+    </script>
+    """
+    components.html(js_main, height=0)
     
     render_item_selection_sidebar(tald_items)
 
@@ -163,6 +184,31 @@ def _render_item_details(item: TALDItem):
 
 def _show_item_confirmation(item: TALDItem) -> Optional[TALDItem]:
     """Mostra un banner di conferma e i pulsanti per iniziare o annullare."""
+
+    # Iniettiamo un secondo script JS qui dentro.
+    js_confirm = f"""
+    <script>
+        function forceJumpToTop() {{
+            try {{
+                // Punta all'ancora globale definita all'inizio del file
+                var marker = window.parent.document.getElementById("selection-view-top");
+                if (marker) {{
+                    marker.scrollIntoView({{behavior: "auto", block: "start"}});
+                }}
+            }} catch (e) {{}}
+        }}
+        
+        // Raffica di scroll per vincere il rendering della pagina di conferma
+        forceJumpToTop();
+        setTimeout(forceJumpToTop, 50);
+        setTimeout(forceJumpToTop, 200);
+        setTimeout(forceJumpToTop, 500);
+        
+        // Timestamp invisibile per forzare reload: {time.time()}
+    </script>
+    """
+    components.html(js_confirm, height=0)
+
     st.markdown("## Convalida la tua scelta")
     st.success(f"✅ **Item Selezionato:** {item.id}. {item.title}")
     

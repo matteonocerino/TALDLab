@@ -12,8 +12,8 @@ Implementa RF_6 del RAD
 """
 
 from typing import Optional, List
-from ..models.evaluation import UserEvaluation
-from ..models.tald_item import TALDItem
+from src.models.evaluation import UserEvaluation
+from src.models.tald_item import TALDItem
 
 
 class EvaluationValidationError(Exception):

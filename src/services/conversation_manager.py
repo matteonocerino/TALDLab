@@ -15,9 +15,9 @@ from datetime import datetime
 from typing import Optional, Dict
 from pathlib import Path
 
-from ..models.tald_item import TALDItem
-from ..models.conversation import ConversationHistory, ConversationMessage
-from .llm_service import LLMService, LLMTimeoutError, LLMConnectionError
+from src.models.tald_item import TALDItem
+from src.models.conversation import ConversationHistory, ConversationMessage
+from src.services.llm_service import LLMService, LLMTimeoutError, LLMConnectionError
 
 
 class ConversationManager:

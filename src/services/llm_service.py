@@ -18,12 +18,8 @@ import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from google.api_core.exceptions import ResourceExhausted, DeadlineExceeded
 
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent))
-
-from models.tald_item import TALDItem
-from models.conversation import ConversationHistory
+from src.models.tald_item import TALDItem
+from src.models.conversation import ConversationHistory
 
 
 class LLMTimeoutError(Exception):

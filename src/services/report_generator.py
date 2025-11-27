@@ -1,43 +1,55 @@
 """
 ReportGenerator - Servizio per generazione report finali
 
-Questo modulo genera i report finali delle simulazioni:
-- Aggrega dati da ground truth, valutazione utente e risultato confronto
-- Genera spiegazioni cliniche tramite LLM
-- Formatta report per visualizzazione e export PDF
-- Include metadati temporali e statistiche conversazione
+Questo modulo è responsabile della creazione, formattazione ed esportazione
+dei report finali delle simulazioni. Aggrega i dati provenienti da diverse
+fonti (valutazione utente, ground truth, storico conversazione) e produce
+un output strutturato.
+
+Responsabilità principali:
+- Aggregazione dati per il report finale (Entity 'Report')
+- Generazione spiegazioni cliniche (tramite LLM o fallback statico)
+- Esportazione del report in formato PDF professionale (ReportLab) direttamente in memoria
 
 Control del pattern Entity-Control-Boundary (vedi RAD sezione 2.6.1)
 Implementa RF_8, RF_9 del RAD
 """
 
+import os
+import re
 from datetime import datetime
 from typing import Optional
+from io import BytesIO 
 
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent))
+# ReportLab imports per generazione PDF reale
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.lib.units import cm
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, KeepTogether
 
-from models.evaluation import UserEvaluation, GroundTruth, EvaluationResult
-from models.conversation import ConversationHistory
-from models.tald_item import TALDItem
-from services.llm_service import LLMService, LLMConnectionError
+from src.models.evaluation import UserEvaluation, GroundTruth, EvaluationResult
+from src.models.conversation import ConversationHistory
+from src.models.tald_item import TALDItem
+from src.services.llm_service import LLMService
 
 
 class Report:
     """
-    Rappresenta un report finale di simulazione.
+    Rappresenta il report finale di una simulazione.
     
-    Entity che aggrega tutti i dati necessari per il report.
+    Entity che aggrega tutti i dati necessari per la visualizzazione e l'export.
+    Viene creato dal ReportGenerator al termine della fase di valutazione.
     
     Attributes:
-        ground_truth (GroundTruth): Ground truth della simulazione
-        user_evaluation (UserEvaluation): Valutazione fornita dall'utente
-        result (EvaluationResult): Risultato del confronto
-        clinical_explanation (str): Spiegazione clinica generata
-        conversation_summary (dict): Statistiche conversazione
-        tald_item (TALDItem): Item TALD completo per reference
-        timestamp (datetime): Timestamp generazione report
+        ground_truth (GroundTruth): Configurazione reale della simulazione (item/grado).
+        user_evaluation (UserEvaluation): Valutazione inserita dall'utente.
+        result (EvaluationResult): Esito del confronto (punteggi, correttezza).
+        clinical_explanation (str): Analisi testuale generata (AI o statica).
+        conversation_summary (dict): Metriche della conversazione (durata, messaggi).
+        tald_item (TALDItem): Dettagli completi dell'item TALD simulato.
+        timestamp (datetime): Momento di generazione del report.
     """
     
     def __init__(
@@ -57,62 +69,23 @@ class Report:
         self.conversation_summary = conversation_summary
         self.tald_item = tald_item
         self.timestamp = timestamp or datetime.now()
-    
-    def to_dict(self) -> dict:
-        """Converte il report in dizionario."""
-        return {
-            "timestamp": self.timestamp.isoformat(),
-            "mode": self.ground_truth.mode,
-            "ground_truth": self.ground_truth.to_dict(),
-            "user_evaluation": self.user_evaluation.to_dict(),
-            "result": self.result.to_dict(),
-            "clinical_explanation": self.clinical_explanation,
-            "conversation_summary": self.conversation_summary,
-            "tald_item": {
-                "id": self.tald_item.id,
-                "title": self.tald_item.title,
-                "type": self.tald_item.type
-            }
-        }
 
 
 class ReportGenerator:
     """
-    Service per generazione report finali delle simulazioni.
+    Service per la gestione della logica di reporting.
     
-    Responsabilità:
-    - Generare report aggregando tutti i dati (RF_8)
-    - Invocare LLM per spiegazioni cliniche (RF_8)
-    - Formattare report per visualizzazione
-    - Esportare report in PDF (RF_9)
-    
-    Come da RAD 2.6.1 - ReportGenerator:
-    "Genera il report finale della simulazione. Aggrega dati da ground truth,
-    valutazione utente e risultato del confronto. Può invocare opzionalmente
-    il Servizio LLM per generare spiegazioni cliniche contestualizzate basate
-    sullo storico conversazionale."
-    
-    Attributes:
-        llm_service (LLMService): Servizio LLM per generare spiegazioni
-    
-    Example:
-        >>> generator = ReportGenerator(llm_service)
-        >>> report = generator.generate_report(
-        ...     ground_truth=gt,
-        ...     user_evaluation=eval,
-        ...     result=comparison_result,
-        ...     conversation=history,
-        ...     tald_item=item
-        ... )
-        >>> print(report.clinical_explanation)
+    Incapsula la logica di business per trasformare i dati grezzi della sessione
+    in un documento clinico strutturato. Gestisce anche l'interazione con
+    LLMService per l'analisi qualitativa.
     """
     
     def __init__(self, llm_service: LLMService):
         """
-        Inizializza il ReportGenerator.
+        Inizializza il generatore.
         
         Args:
-            llm_service (LLMService): Servizio LLM configurato
+            llm_service (LLMService): Riferimento al servizio LLM per generare spiegazioni.
         """
         self.llm_service = llm_service
     
@@ -122,49 +95,43 @@ class ReportGenerator:
         user_evaluation: UserEvaluation,
         result: EvaluationResult,
         conversation: ConversationHistory,
-        tald_item: TALDItem,
-        include_llm_explanation: bool = True
+        tald_item: TALDItem
     ) -> Report:
         """
-        Genera il report finale della simulazione.
+        Genera l'oggetto Report completo.
         
-        Implementa RF_8: generazione e visualizzazione report.
+        Esegue i seguenti passaggi:
+        1. Tenta di generare una spiegazione clinica tramite LLM.
+        2. In caso di errore LLM, attiva il fallback statico (dati JSON).
+        3. Calcola le statistiche finali della conversazione.
+        4. Aggrega tutto nell'entità Report.
+        
+        Implementa RF_8 (Generazione report).
         
         Args:
-            ground_truth (GroundTruth): Ground truth simulazione
-            user_evaluation (UserEvaluation): Valutazione utente
-            result (EvaluationResult): Risultato confronto
-            conversation (ConversationHistory): Storico conversazione
-            tald_item (TALDItem): Item TALD completo
-            include_llm_explanation (bool): Se True, genera spiegazione LLM
+            ground_truth: La verità di base della simulazione.
+            user_evaluation: L'input dell'utente.
+            result: Il risultato calcolato dal ComparisonEngine.
+            conversation: Lo storico completo dei messaggi.
+            tald_item: L'item TALD oggetto della simulazione.
             
         Returns:
-            Report: Report completo generato
-            
-        Example:
-            >>> report = generator.generate_report(
-            ...     ground_truth=gt,
-            ...     user_evaluation=eval,
-            ...     result=result,
-            ...     conversation=history,
-            ...     tald_item=item
-            ... )
+            Report: L'oggetto report popolato.
         """
-        # 1. Genera spiegazione clinica (opzionale via LLM)
-        if include_llm_explanation:
-            clinical_explanation = self._generate_clinical_explanation(
+        # 1. Generazione spiegazione clinica (con gestione Fallback)
+        try:
+            # Tentativo principale: Analisi AI tramite Gemini
+            clinical_explanation = self.llm_service.generate_clinical_explanation(
                 tald_item=tald_item,
-                conversation=conversation,
+                conversation_history=conversation,
                 grade=ground_truth.grade
             )
-        else:
-            # Fallback: spiegazione base senza LLM
-            clinical_explanation = self._generate_basic_explanation(
-                tald_item=tald_item,
-                grade=ground_truth.grade
-            )
+        except Exception:
+            # Fallback intelligente: Se l'IA non è disponibile (es. quota esaurita, offline),
+            # generiamo comunque un report utile usando i dati statici del manuale.
+            clinical_explanation = self._generate_basic_explanation(tald_item, ground_truth.grade)
         
-        # 2. Prepara summary conversazione
+        # 2. Calcolo metriche conversazione
         conversation_summary = {
             "total_messages": conversation.get_message_count(),
             "duration_minutes": conversation.get_duration_minutes(),
@@ -173,8 +140,8 @@ class ReportGenerator:
             "assistant_messages": len(conversation.get_assistant_messages())
         }
         
-        # 3. Crea oggetto Report
-        report = Report(
+        # 3. Creazione Entity Report
+        return Report(
             ground_truth=ground_truth,
             user_evaluation=user_evaluation,
             result=result,
@@ -182,59 +149,27 @@ class ReportGenerator:
             conversation_summary=conversation_summary,
             tald_item=tald_item
         )
-        
-        return report
-    
-    def _generate_clinical_explanation(
-        self,
-        tald_item: TALDItem,
-        conversation: ConversationHistory,
-        grade: int
-    ) -> str:
+
+    def _generate_basic_explanation(self, tald_item: TALDItem, grade: int) -> str:
         """
-        Genera spiegazione clinica tramite LLM.
+        Genera una spiegazione clinica base usando i dati statici (Fallback).
+        
+        Viene utilizzata quando il servizio LLM non è raggiungibile per garantire
+        che il report contenga comunque informazioni didattiche utili provenienti
+        dal manuale TALD.
         
         Args:
-            tald_item (TALDItem): Item simulato
-            conversation (ConversationHistory): Storico conversazione
-            grade (int): Grado simulato
+            tald_item: L'item TALD.
+            grade: Il grado simulato.
             
         Returns:
-            str: Spiegazione clinica dettagliata
-        """
-        try:
-            explanation = self.llm_service.generate_clinical_explanation(
-                tald_item=tald_item,
-                conversation_history=conversation,
-                grade=grade
-            )
-            return explanation
-        
-        except LLMConnectionError as e:
-            # Fallback se LLM non disponibile
-            return self._generate_basic_explanation(tald_item, grade) + \
-                   f"\n\n(Nota: Spiegazione LLM non disponibile: {str(e)})"
-    
-    def _generate_basic_explanation(
-        self,
-        tald_item: TALDItem,
-        grade: int
-    ) -> str:
-        """
-        Genera spiegazione clinica base (senza LLM).
-        
-        Fallback quando LLM non è disponibile o non richiesto.
-        
-        Args:
-            tald_item (TALDItem): Item simulato
-            grade (int): Grado simulato
-            
-        Returns:
-            str: Spiegazione base
+            str: Testo formattato con descrizione e criteri.
         """
         grade_desc = tald_item.get_grade_description(grade)
         
-        explanation = f"""**Item TALD simulato:** {tald_item.title}
+        explanation = f"""**Nota:** Questa è una spiegazione generata dai dati statici (LLM non disponibile al momento).
+
+**Item TALD simulato:** {tald_item.title}
 
 **Descrizione del disturbo:**
 {tald_item.description}
@@ -244,144 +179,413 @@ class ReportGenerator:
 
 **Grado manifestato:** {grade}/4 - {grade_desc}
 
-**Come identificare questo disturbo:**
-Durante l'intervista clinica, questo disturbo si manifesta attraverso specifici 
-pattern linguistici e comportamentali. L'esaminatore deve prestare attenzione 
-alle caratteristiche descritte nei criteri diagnostici e confrontarle con 
-le manifestazioni osservate nel paziente.
-
 **Esempio tipico:**
 {tald_item.example}
 """
         return explanation
     
-    def format_report_text(self, report: Report) -> str:
+    def _clean_markdown_for_pdf(self, text: str) -> str:
         """
-        Formatta il report come testo leggibile.
+        Converte il Markdown base (**, ##, *) in tag XML compatibili con ReportLab.
+        """
+        if not text: return ""
+
+        # 1. Rimuovi eventuali titoli Markdown (## Titolo) e falli diventare grassetto + a capo
+        # Sostituisce "## Titolo" con "<b>Titolo</b><br/>"
+        text = re.sub(r'#{2,}\s*(.*?)(?:\n|$)', r'<b>\1</b><br/>', text)
+
+        # 2. Converti grassetto: **Testo** -> <b>Testo</b>
+        text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
+
+        # 3. Converti corsivo: *Testo* -> <i>Testo</i>
+        text = re.sub(r'\*(.*?)\*', r'<i>\1</i>', text)
+
+        # 4. Gestione elenchi puntati (simulati con <br/> e bullet char)
+        text = text.replace('\n- ', '<br/>• ')
+        
+        # 5. Gestione a capo standard
+        text = text.replace('\n', '<br/>')
+
+        return text
+    
+    def _parse_ai_response_to_flowables(self, text: str, style_normal, style_title) -> list:
+        """
+        Spezza il testo dell'AI in paragrafi distinti per gestire correttamente
+        i salti pagina. Riconosce i titoli e applica keepWithNext.
+        """
+        flowables = []
+        if not text: return flowables
+        
+        # 1. Normalizziamo e dividiamo per righe
+        text = text.replace('\r\n', '\n')
+        lines = text.split('\n')
+        
+        # Flag per saltare il primissimo titolo se ridondante
+        first_line_processed = False
+
+        for line in lines:
+            line = line.strip()
+            if not line: continue
+            
+            # Se è la prima riga significativa E sembra un titolo ripetuto, lo saltiamo.
+            if not first_line_processed:
+                # Regex che cerca "Analisi", "Report", "Clinica" all'inizio
+                if re.match(r'^(#|\*| )*(Analisi|Report|Colloquio|Disturbo)', line, re.IGNORECASE):
+                    first_line_processed = True
+                    continue # SALTA QUESTA RIGA (non la scrive nel PDF)
+                first_line_processed = True
+            
+            # 2. Rileviamo se è un sottotitolo
+            # Criteri: inizia con ** o ## o numeri puntati grassettati (es. "1. **...")
+            is_title = False
+            if line.startswith('##') or line.startswith('**') or (len(line) > 0 and line[0].isdigit() and '**' in line[:10]):
+                is_title = True
+            
+            # 3. Pulizia Markdown (usiamo logica simile a clean_markdown)
+            clean_text = line
+            clean_text = re.sub(r'^#{2,}\s*', '', clean_text) # Via i ##
+            clean_text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', clean_text) # Grassetto
+            clean_text = re.sub(r'\*(.*?)\*', r'<i>\1</i>', clean_text) # Corsivo
+            
+            # 4. Creazione Oggetto
+            if is_title:
+                # TITOLO: Usa lo stile apposito che ha keepWithNext=True
+                flowables.append(Paragraph(clean_text, style_title))
+            else:
+                # TESTO: Stile normale
+                flowables.append(Paragraph(clean_text, style_normal))
+                # Aggiungiamo un piccolo spazio dopo ogni paragrafo di testo
+                flowables.append(Spacer(1, 0.2*cm))
+                
+        return flowables
+    
+    def export_pdf_to_bytes(self, report: Report, all_items: list[TALDItem] = None) -> BytesIO:
+        """
+        Genera il PDF direttamente in memoria (buffer BytesIO).
+        
+        Questo metodo permette il download immediato del file tramite Streamlit
+        senza dover salvare file temporanei sul disco del server, migliorando
+        sicurezza e performance.
+        
+        Implementa RF_9 (Esportazione PDF).
         
         Args:
-            report (Report): Report da formattare
+            report (Report): Il report da esportare.
             
         Returns:
-            str: Report formattato come testo
+            BytesIO: Buffer contenente i dati binari del PDF, pronto per il download.
         """
-        lines = []
-        lines.append("="*70)
-        lines.append("TALDLab - Report Simulazione")
-        lines.append("="*70)
-        lines.append(f"\nData: {report.timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
-        lines.append(f"Modalità: {report.ground_truth.mode.upper()}")
+        buffer = BytesIO()
         
-        lines.append("\n" + "-"*70)
-        lines.append("GROUND TRUTH")
-        lines.append("-"*70)
-        lines.append(f"Item simulato: {report.tald_item.id}. {report.tald_item.title}")
-        lines.append(f"Tipo: {report.tald_item.type}")
-        lines.append(f"Grado: {report.ground_truth.grade}/4")
+        # Setup Documento PDF (Margini A4 standard)
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=A4,
+            rightMargin=2*cm, leftMargin=2*cm,
+            topMargin=2*cm, bottomMargin=2*cm,
+            title="TALDLab Report"
+        )
         
-        lines.append("\n" + "-"*70)
-        lines.append("VALUTAZIONE UTENTE")
-        lines.append("-"*70)
+        # --- Definizione Stili (ReportLab Styles) ---
+        styles = getSampleStyleSheet()
         
-        if report.ground_truth.is_exploratory_mode():
-            lines.append(f"Item identificato: {report.user_evaluation.item_id}")
+        # Stile Titolo Principale
+        style_title = ParagraphStyle(
+            'TALDTitle', 
+            parent=styles['Heading1'], 
+            alignment=TA_LEFT, 
+            fontSize=22, 
+            textColor=colors.HexColor('#2c3e50'),
+            spaceAfter=2,
+            leading=28 # Aumentato per spaziare
+        )
         
-        lines.append(f"Grado attribuito: {report.user_evaluation.grade}/4")
+        # Stile Sottotitolo
+        style_subtitle = ParagraphStyle(
+            'TALDSub', 
+            parent=styles['Normal'], 
+            alignment=TA_LEFT, 
+            fontSize=13, 
+            textColor=colors.HexColor('#7f8c8d'),
+            spaceAfter=6,
+            leading=16 # Aumentato per spaziare
+        )
         
+        # Stile Data
+        style_date = ParagraphStyle(
+            'TALDDate',
+            parent=styles['Normal'],
+            alignment=TA_LEFT,
+            fontSize=10,
+            textColor=colors.black,
+            leading=12
+        )
+
+        # Stile Intestazioni Sezioni (H2) con sfondo grigio chiaro
+        style_h2 = ParagraphStyle(
+            'TALDH2', 
+            parent=styles['Heading2'], 
+            fontSize=14, 
+            spaceBefore=12, 
+            spaceAfter=6,
+            textColor=colors.HexColor('#34495e'),
+            borderPadding=5,
+            borderColor=colors.HexColor('#ecf0f1'),
+            borderWidth=0,
+            backColor=colors.HexColor('#f8f9fa'),
+            keepWithNext=True  # IMPORTANTE: Evita titoli orfani a fine pagina
+        )
+
+        # Definizione stile per i Sottotitoli (H3)
+        style_h3 = ParagraphStyle(
+            'TALDH3',
+            parent=styles['Heading3'],
+            fontSize=11,
+            textColor=colors.HexColor('#2c3e50'),
+            spaceBefore=6,
+            spaceAfter=2,      # Poco spazio dopo, per stare vicino al testo
+            keepWithNext=True  # Non si stacca mai dal prossimo paragrafo
+        )
+        
+        # Testo normale giustificato per leggibilità
+        style_normal = ParagraphStyle(
+            'TALDNormal', 
+            parent=styles['Normal'], 
+            fontSize=10, 
+            leading=14,
+            alignment=TA_JUSTIFY
+        )
+        
+        # Stili per esiti 
+        style_ok = ParagraphStyle(
+            'ResultOK', 
+            parent=style_normal, 
+            textColor=colors.HexColor('#27ae60'), 
+            fontName='Helvetica-Bold',
+            alignment=TA_CENTER  
+        )
+        
+        style_err = ParagraphStyle(
+            'ResultERR', 
+            parent=style_normal, 
+            textColor=colors.HexColor('#c0392b'), 
+            fontName='Helvetica-Bold',
+            alignment=TA_CENTER  
+        )
+        
+        style_warn = ParagraphStyle(
+            'ResultWARN', 
+            parent=style_normal, 
+            textColor=colors.HexColor('#e67e22'), 
+            fontName='Helvetica-Bold',
+            alignment=TA_CENTER  
+        )
+        
+        # Stile per il punteggio (Verde/Rosso dinamico)
+        score_color = colors.HexColor('#27ae60') if report.result.is_passing_score() else colors.HexColor('#c0392b')
+        style_score = ParagraphStyle(
+            'TALDScore',
+            parent=styles['Normal'],
+            fontSize=12,
+            textColor=score_color,
+            fontName='Helvetica-Bold'
+        )
+
+        # --- Costruzione Contenuto (Story) ---
+        elements = []
+
+        # 1. HEADER (LOGO + TESTO BEN DISTANZIATI)
+        logo_path = "assets/taldlab_logo.png"
+        
+        # Colonna Logo
+        if os.path.exists(logo_path):
+            img = Image(logo_path, width=2.5*cm, height=2.5*cm)
+            img.hAlign = 'LEFT'
+            col_logo = img
+        else:
+            col_logo = Paragraph("<b>TALDLab</b>", style_title) # Fallback testuale
+
+        # Colonna Testo Intestazione
+        title_text = [
+            Paragraph("TALDLab", style_title),
+            Paragraph("Report di Simulazione Clinica", style_subtitle),
+            Paragraph(f"Data: {report.timestamp.strftime('%d/%m/%Y %H:%M')}", style_date)
+        ]
+        
+        # Creazione Tabella Header 
+        header_table = Table([[col_logo, title_text]], colWidths=[3*cm, 13*cm])
+        header_table.setStyle(TableStyle([
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('LEFTPADDING', (0,0), (-1,-1), 0),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 20), 
+        ]))
+        elements.append(header_table)
+        elements.append(Spacer(1, 0.2*cm))
+
+        # 2. RIEPILOGO VALUTAZIONE (Tabella)
+        elements.append(KeepTogether([
+            Paragraph("Riepilogo Valutazione", style_h2),
+            self._create_summary_table(report, style_ok, style_err, style_warn, all_items),
+            Spacer(1, 0.5*cm)
+        ]))
+        
+        # Punteggio sotto la tabella
+        elements.append(Paragraph(f"Punteggio Complessivo: {report.result.score}/100 ({report.result.get_performance_level()})", style_score))
+        elements.append(Spacer(1, 1.0*cm))
+
+        # 3. SPIEGAZIONE CLINICA 
+        # Titolo Sezione
+        elements.append(Paragraph("Analisi Clinica (AI Generated)", style_h2))
+        
+        # Generazione dinamica dei paragrafi
+        ai_flowables = self._parse_ai_response_to_flowables(
+            report.clinical_explanation, 
+            style_normal, 
+            style_h3
+        )
+        elements.extend(ai_flowables)
+        
+        # Spazio finale
+        elements.append(Spacer(1, 1.0*cm))
+        
+        # 4. DETTAGLI ITEM (Box informativo bordato)
+        elements.append(KeepTogether([
+            Paragraph("Dettagli Item Simulato", style_h2),
+            self._create_item_details_table(report, style_normal),
+            Spacer(1, 1.0*cm)
+        ]))
+
+        # 5. STATISTICHE E NOTE PERSONALI
+        stats_text = (
+            f"Durata: {report.conversation_summary['duration_minutes']} min | "
+            f"Messaggi: {report.conversation_summary['total_messages']} | "
+            f"Parole: {report.conversation_summary['total_words']}"
+        )
+        
+        notes_section = []
         if report.user_evaluation.notes:
-            lines.append(f"Note: {report.user_evaluation.notes}")
-        
-        lines.append("\n" + "-"*70)
-        lines.append("RISULTATO VALUTAZIONE")
-        lines.append("-"*70)
-        
-        if report.result.item_correct is not None:
-            status = "✓ CORRETTO" if report.result.item_correct else "✗ ERRATO"
-            lines.append(f"Item identificato: {status}")
-        
-        status = "✓ CORRETTO" if report.result.grade_correct else "✗ ERRATO"
-        lines.append(f"Grado attribuito: {status}")
-        lines.append(f"Differenza grado: {report.result.grade_difference}")
-        lines.append(f"\nPunteggio: {report.result.score}/100")
-        lines.append(f"Performance: {report.result.get_performance_level()}")
-        
-        lines.append("\n" + "-"*70)
-        lines.append("FEEDBACK")
-        lines.append("-"*70)
-        lines.append(report.result.feedback_message)
-        
-        lines.append("\n" + "-"*70)
-        lines.append("SPIEGAZIONE CLINICA")
-        lines.append("-"*70)
-        lines.append(report.clinical_explanation)
-        
-        lines.append("\n" + "-"*70)
-        lines.append("STATISTICHE CONVERSAZIONE")
-        lines.append("-"*70)
-        lines.append(f"Messaggi totali: {report.conversation_summary['total_messages']}")
-        lines.append(f"Durata: {report.conversation_summary['duration_minutes']} minuti")
-        lines.append(f"Parole scambiate: {report.conversation_summary['total_words']}")
-        
-        lines.append("\n" + "="*70)
-        lines.append("Fine report")
-        lines.append("="*70)
-        
-        return "\n".join(lines)
-    
-    def export_pdf(self, report: Report, filename: Optional[str] = None) -> str:
-        """
-        Esporta il report in formato PDF.
-        
-        Implementa RF_9: esportazione report in PDF.
-        
-        Args:
-            report (Report): Report da esportare
-            filename (str, optional): Nome file PDF (auto-generato se None)
+            notes_section.append(Paragraph("<b>Note Personali:</b>", style_normal))
+            notes_section.append(Paragraph(report.user_evaluation.notes, style_normal))
             
-        Returns:
-            str: Path del file PDF creato
+        elements.append(KeepTogether([
+            Paragraph("Statistiche Conversazione", style_h2),
+            Paragraph(stats_text, style_normal),
+            Spacer(1, 0.5*cm),
+            *notes_section
+        ]))
+
+        # Footer (Piè di pagina)
+        elements.append(Spacer(1, 1*cm))
+        elements.append(Paragraph(
+            f"Generato da TALDLab il {datetime.now().strftime('%d/%m/%Y')}", 
+            ParagraphStyle('Footer', parent=styles['Italic'], fontSize=8, textColor=colors.grey, alignment=TA_CENTER)
+        ))
+
+        # Generazione fisica del file in memoria
+        doc.build(elements)
+        
+        # Riposiziona il cursore all'inizio del buffer per la lettura
+        buffer.seek(0)
+        return buffer
+
+    def _create_summary_table(self, report: Report, style_ok, style_err, style_warn, all_items: list[TALDItem] = None) -> Table:
+        """
+        Crea la tabella riepilogo per il PDF.
+        Usa Paragraph per gestire il testo lungo che va a capo.
+        """
+        # Creiamo uno stile "neutro" per le celle di testo normale che devono andare a capo
+        styles = getSampleStyleSheet()
+        style_cell = ParagraphStyle(
+            'CellText',
+            parent=styles['Normal'],
+            fontSize=10,
+            alignment=TA_CENTER, # Centrato come il resto della tabella
+            leading=12,          # Interlinea
+            textColor=colors.black
+        )
+
+        # --- 1. Preparazione Testo Ground Truth ---
+        # Avvolgiamo in Paragraph così va a capo se lungo
+        gt_text = f"{report.tald_item.id}. {report.tald_item.title}"
+        gt_cell = Paragraph(gt_text, style_cell)
+
+        # --- 2. Preparazione Testo Utente ---
+        if report.ground_truth.is_exploratory_mode():
+            user_id = report.user_evaluation.item_id
             
-        Note:
-            Implementazione placeholder - richiede reportlab per PDF reale
-        """
-        # Genera nome file se non fornito
-        if filename is None:
-            timestamp = report.timestamp.strftime("%Y%m%d_%H%M%S")
-            filename = f"TALDLab_Report_{timestamp}.pdf"
-        
-        # TODO: Implementazione completa con reportlab
-        # Per ora, salva come .txt come placeholder
-        txt_filename = filename.replace('.pdf', '.txt')
-        
-        content = self.format_report_text(report)
-        
-        with open(txt_filename, 'w', encoding='utf-8') as f:
-            f.write(content)
-        
-        return txt_filename
-    
-    def get_report_summary(self, report: Report) -> dict:
-        """
-        Genera un summary compatto del report.
-        
-        Utile per visualizzazioni rapide o statistiche.
-        
-        Args:
-            report (Report): Report da riassumere
+            # Cerca il titolo
+            user_text_str = f"ID {user_id}" 
+            if all_items and user_id:
+                found = next((i for i in all_items if i.id == user_id), None)
+                if found:
+                    user_text_str = f"{found.id}. {found.title}"
             
-        Returns:
-            dict: Summary con info chiave
+            # Avvolgiamo in Paragraph
+            user_item_cell = Paragraph(user_text_str, style_cell)
+            
+            # Esito (Paragraph colorato)
+            res_item = Paragraph("CORRETTO", style_ok) if report.result.item_correct else Paragraph("ERRATO", style_err)
+        else:
+            user_item_cell = Paragraph("N/A (Guidata)", style_cell)
+            res_item = "-"
+
+        # --- 3. Preparazione Grado ---
+        # Anche i gradi li mettiamo in Paragraph per coerenza di font/stile
+        gt_grade_cell = Paragraph(f"{report.ground_truth.grade}/4", style_cell)
+        user_grade_cell = Paragraph(f"{report.user_evaluation.grade}/4", style_cell)
+
+        if report.result.grade_correct:
+            res_grade = Paragraph("CORRETTO", style_ok)
+        elif report.result.grade_difference == 1:
+            res_grade = Paragraph("IMPRECISO", style_warn)
+        else:
+            res_grade = Paragraph("ERRATO", style_err)
+
+        # --- 4. Costruzione Dati Tabella ---
+        data = [
+            ["Parametro", "Ground Truth", "Valutazione Utente", "Esito"],
+            # Nota: Ora passiamo gli oggetti Paragraph, non stringhe
+            ["Item TALD", gt_cell, user_item_cell, res_item],
+            ["Grado", gt_grade_cell, user_grade_cell, res_grade]
+        ]
+        
+        # Le larghezze colonne (colWidths) ora funzionano come limiti:
+        # Il testo andrà a capo se supera i 6.0cm o 4.0cm definiti qui sotto.
+        t = Table(data, colWidths=[3.5*cm, 6.0*cm, 4.0*cm, 2.5*cm])
+        
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#34495e')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),     # Allineamento orizzontale
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),    # Allineamento verticale
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#fdfdfd')),
+            ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#bdc3c7')),
+            # Rimuoviamo eventuali padding manuali che potrebbero stringere troppo il testo
+            ('LEFTPADDING', (0,0), (-1,-1), 6),
+            ('RIGHTPADDING', (0,0), (-1,-1), 6),
+        ]))
+        
+        return t
+
+    def _create_item_details_table(self, report: Report, style_normal: ParagraphStyle) -> Table:
         """
-        return {
-            "timestamp": report.timestamp.isoformat(),
-            "mode": report.ground_truth.mode,
-            "item_id": report.tald_item.id,
-            "item_title": report.tald_item.title,
-            "score": report.result.score,
-            "performance": report.result.get_performance_level(),
-            "item_correct": report.result.item_correct,
-            "grade_correct": report.result.grade_correct,
-            "grade_difference": report.result.grade_difference,
-            "messages_exchanged": report.conversation_summary['total_messages'],
-            "duration_minutes": report.conversation_summary['duration_minutes']
-        }
+        Crea la tabella dettagli item per il PDF.
+        Incapsula le informazioni statiche in un box pulito.
+        """
+        item_info = [
+            [Paragraph(f"<b>Descrizione:</b> {report.tald_item.description}", style_normal)],
+            [Paragraph(f"<b>Criteri:</b> {report.tald_item.criteria}", style_normal)],
+            [Paragraph(f"<b>Esempio:</b> {report.tald_item.example}", style_normal)]
+        ]
+        t = Table(item_info, colWidths=[16*cm])
+        t.setStyle(TableStyle([
+            ('BOX', (0,0), (-1,-1), 0.25, colors.grey),
+            ('LEFTPADDING', (0,0), (-1,-1), 10),
+            ('RIGHTPADDING', (0,0), (-1,-1), 10),
+            ('TOPPADDING', (0,0), (-1,-1), 5),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+        ]))
+        return t
