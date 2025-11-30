@@ -2,6 +2,7 @@
 /* TALDLab - Foglio di Stile Globale       */
 /* ======================================= */
 
+
 /* 1. VARIABILI GLOBALI E TEMA */
 body[theme="light"] {
     --bg-color: #ffffff;
@@ -19,6 +20,7 @@ body[theme="dark"] {
     --card-border: #333333;
     --info-box-bg: #1c213c;
 }
+
 
 /* 2. LAYOUT PRINCIPALE */
 .stApp {
@@ -46,6 +48,7 @@ body[theme="dark"] {
     color: var(--text-color-secondary);
     text-align: center;
 }
+
 
 /* 3. HEADER E BRANDING */
 .brand {
@@ -81,6 +84,7 @@ hr {
     border-color: var(--card-border) !important;
 }
 
+
 /* 4. CARD DELLA MODALITÀ */
 .mode-card {
     background: var(--card-bg);
@@ -101,6 +105,7 @@ hr {
     border-left: 6px solid #e67e22;
 }
 
+
 /* 5. BOX INFORMATIVO */
 .info-box {
     background-color: var(--info-box-bg);
@@ -109,6 +114,7 @@ hr {
     border-radius: 4px;
     margin-top: 2rem;
 }
+
 
 /* 6. SIDEBAR */
 [data-testid="stSidebar"] {
@@ -130,6 +136,7 @@ hr {
     margin-top: 0.3rem !important;
     padding-left: 1.1rem !important;
 }
+
 
 /* 7. STILE BOTTONI */
 [data-testid="stHorizontalBlock"] [data-testid="stButton"] button {
@@ -253,6 +260,7 @@ button[key="confirm_back_eval"]:hover {
     filter: brightness(1.1) !important;
 }
 
+
 /* 8. STILI SPECIFICI PER VIEW */
 .item-container {
     border-bottom: 1px solid var(--card-border);
@@ -268,6 +276,7 @@ button[key="confirm_back_eval"]:hover {
 .section-title {
     margin-top: 2rem !important;
 }
+
 
 /* 9. CHAT BUBBLES + ANIMAZIONE OTTIMIZZATA */
 .chat-bubble-user, .chat-bubble-assistant {
@@ -327,6 +336,7 @@ button[key="confirm_back_eval"]:hover {
     100% { opacity: 1; transform: translateY(0); }
 }
 
+
 /* 10. INDICATORE DI DIGITAZIONE (Typing Dots) */
 .typing-indicator-container {
     display: flex;
@@ -338,7 +348,7 @@ button[key="confirm_back_eval"]:hover {
 .typing-dot {
     width: 8px;
     height: 8px;
-    background-color: #888; /* Colore dei pallini */
+    background-color: #888; 
     border-radius: 50%;
     animation: typingBounce 1.4s infinite ease-in-out both;
 }
@@ -361,6 +371,7 @@ button[key="confirm_back_eval"]:hover {
         opacity: 1;
     }
 }
+
 
 /* 11. FIX SELECTBOX + GRADE LEGEND */
 /* Forza cursore a freccia su tutti i discendenti dello selectbox */

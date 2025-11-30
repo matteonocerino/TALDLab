@@ -13,7 +13,8 @@ import streamlit as st
 import os
 import base64
 import re
-import streamlit.components.v1 as components
+
+from src.utils import scroll_to_top
 from src.services.report_generator import Report
 
 
@@ -66,38 +67,8 @@ def render_report_view(report: Report) -> str:
         str: L'azione successiva scelta dall'utente ("new_simulation", "feedback", None).
     """
 
-   # 1. Piazziamo un'ancora invisibile in cima alla pagina
-    st.markdown('<div id="report-top-marker" style="position: absolute; top: -100px;"></div>', unsafe_allow_html=True)
-    
-    # 2. Script che forza il browser a saltare a quell'ancora
-    js = """
-    <script>
-        function jumpToTop() {
-            try {
-                var doc = window.parent.document;
-                
-                // Metodo 1: Cerca il marker e saltaci sopra
-                var marker = doc.getElementById("report-top-marker");
-                if (marker) {
-                    marker.scrollIntoView({behavior: "auto", block: "start"});
-                }
-                
-                // Metodo 2: Reset forzato del contenitore principale (classico)
-                var mainView = doc.querySelector('[data-testid="stAppViewContainer"]');
-                if (mainView) { mainView.scrollTop = 0; }
-                
-            } catch (e) { console.log(e); }
-        }
-        
-        // Esegui a raffica per vincere contro il rendering di Streamlit
-        jumpToTop();
-        setTimeout(jumpToTop, 50);
-        setTimeout(jumpToTop, 150);
-        setTimeout(jumpToTop, 300);
-        setTimeout(jumpToTop, 600);
-    </script>
-    """
-    components.html(js, height=0)
+    # Forza scroll in alto all'apertura della pagina
+    scroll_to_top("report-top-marker")
     
     # 1. Header e Brand
     logo_path = os.path.join("assets", "taldlab_logo.png")
@@ -119,7 +90,13 @@ def render_report_view(report: Report) -> str:
     """, unsafe_allow_html=True)
     
     mode_label = "🎯 Modalità Guidata" if report.ground_truth.is_guided_mode() else "🔍 Modalità Esplorativa"
-    st.markdown(f'<p class="breadcrumb"><strong>{mode_label}</strong> › Valutazione › Report</p>', unsafe_allow_html=True)
+    
+    if report.ground_truth.is_guided_mode():
+        breadcrumb = f'<p class="breadcrumb">{mode_label} › Selezione Item › Intervista › Valutazione › <strong>Report</strong></p>'
+    else:
+        breadcrumb = f'<p class="breadcrumb">{mode_label} › Intervista › Valutazione › <strong>Report</strong></p>'
+
+    st.markdown(breadcrumb, unsafe_allow_html=True)
     st.markdown("---")
 
     _render_report_sidebar(report)
@@ -156,7 +133,7 @@ def render_report_view(report: Report) -> str:
             else:
                 _render_fixed_height_text("TUA IDENTIFICAZIONE", "<em>(Già noto)</em>", align="right")
     
-        # Box Esito (Ora sarà allineato perché sopra c'è l'altezza fissa)
+        # Box Esito 
         if report.ground_truth.is_exploratory_mode():
             if report.result.item_correct:
                 st.success("✅ Identificazione **CORRETTA**")
@@ -318,7 +295,7 @@ def _render_report_sidebar(report: Report):
         with c1: 
             st.metric("Messaggi", report.conversation_summary['total_messages'])
         with c2: 
-            st.metric("Durata", f"{report.conversation_summary['duration_minutes']} min")
+            st.metric("Minuti", f"{report.conversation_summary['duration_minutes']}")
         
         st.caption(f"Parole scambiate: {report.conversation_summary['total_words']}")
 
@@ -336,7 +313,7 @@ def _render_score_banner(report: Report):
         title = "Ottimo Lavoro!" if score >= 80 else "Esercitazione Superata"
         
     elif score >= 40:
-        # PARZIALE (Arancio/Giallo scuro) - Per chi prende 50
+        # MIGLIORABILE (Arancio/Giallo scuro) - Per chi prende 50
         bg_color = "rgba(230, 126, 34, 0.9)" 
         icon = "⚠️"
         title = "Esercitazione Migliorabile"
@@ -384,7 +361,8 @@ def handle_pdf_download(report: Report):
                 file_name=filename,
                 mime="application/pdf",
                 use_container_width=True,
-                type="secondary"
+                type="secondary",
+                key="btn_download_report_pdf"
             )
             
     except Exception as e:

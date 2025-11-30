@@ -8,7 +8,7 @@ della sessione corrente, coordinando tutte le fasi dell'interazione
 Entity del pattern Entity-Control-Boundary (vedi RAD sezione 2.6.1)
 """
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from typing import Optional
 from datetime import datetime
 from enum import Enum
@@ -238,7 +238,6 @@ class SessionState:
         self.user_evaluation = None
         self.evaluation_result = None
         self.created_at = datetime.now()
-        # opzionale: session_id persistente per debug o analytics
     
     def to_dict(self) -> dict:
         """

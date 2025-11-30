@@ -16,7 +16,7 @@ import time
 import google.generativeai as genai
 
 from typing import Optional
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from src.models.conversation import ConversationHistory
 from src.models.tald_item import TALDItem
@@ -59,7 +59,7 @@ def _force_rebuild_llm_service(llm_service):
         return True
         
     except Exception as e:
-        st.error(f"⚠️ Impossibile ristabilire la connessione: {e}")
+        st.error(f"❌ Impossibile ristabilire la connessione: {e}")
         return False
 
 
@@ -135,40 +135,23 @@ def render_chat_interface(
     _render_header(tald_item, mode)
     render_chat_sidebar(conversation, tald_item, mode)
 
-    # Controlla se l'utente vuole tornare indietro
+    # Controlla back button
     if st.session_state.get("reset_requested"):
-        for key in ("llm_error", "pending_prompt", "chat_session", "frozen_duration_during_retry"):
-            if key in st.session_state:
-                del st.session_state[key]
-
-        if "confirm_terminate_pending" in st.session_state:
-            del st.session_state["confirm_terminate_pending"]
-
-        del st.session_state["reset_requested"]
-
+        _cleanup_session_state()
         return "reset"
 
     if st.session_state.get("back_to_item_selection"):
-        for key in ("llm_error", "pending_prompt", "chat_session", "frozen_duration_during_retry"):
-            if key in st.session_state:
-                del st.session_state[key]
-
-        if "confirm_terminate_pending" in st.session_state:
-            del st.session_state["confirm_terminate_pending"]
-
-        del st.session_state["back_to_item_selection"]
-
+        _cleanup_session_state()
         return "back_to_items"
+    
+    if conversation.get_message_count() == 0:
+        _render_initial_instructions(mode, tald_item if mode == "guided" else None)
 
-
-    # --- Visualizzazione Errori (IN ALTO) ---
+    # --- Visualizzazione Errori ---
     if "llm_error" in st.session_state:
         _handle_llm_error_display(
             conversation, tald_item, grade, llm_service, mode
         )
-
-    if conversation.get_message_count() == 0:
-        _render_initial_instructions(mode, tald_item if mode == "guided" else None)
 
     # --- Renderizzazione Storico Chat ---
     chat_container = st.container()
@@ -314,10 +297,16 @@ def render_chat_interface(
     st.markdown("---")
 
     # --- Area Input ---
+
+    # Blocchiamo l'input se c'è un popup di conferma aperto (Termina O Torna Indietro)
+    is_confirming_exit = st.session_state.get("confirm_back_chat", False)
+    is_confirming_terminate = st.session_state.get("confirm_terminate_pending", False)
+
     input_disabled = (
     st.session_state.is_processing or 
     "llm_error" in st.session_state or
-    st.session_state.get("confirm_terminate_pending", False)
+    is_confirming_terminate or
+    is_confirming_exit
 )
 
     st.text_area(
@@ -329,13 +318,15 @@ def render_chat_interface(
         disabled=input_disabled
     )
 
+    warning_placeholder = st.empty()
+
     col1, col2 = st.columns(2)
     
     with col1:
         terminate = st.button(
             "⏹️ Termina", 
             use_container_width=True,
-            disabled=st.session_state.is_processing or st.session_state.get("confirm_terminate_pending", False)
+            disabled=st.session_state.is_processing or st.session_state.get("confirm_terminate_pending", False) or is_confirming_exit
         )
         
     with col2:
@@ -349,7 +340,7 @@ def render_chat_interface(
     # LOGICA TERMINATE (dopo aver creato il bottone)
     if terminate:
         if conversation.get_message_count() < 2:
-            st.warning("⚠️ Conduci almeno uno scambio domanda–risposta prima di terminare.")
+            warning_placeholder.warning("Conduci almeno uno scambio domanda–risposta prima di terminare.", icon="⚠️")
         else:
             # Salva stato "conferma termina" per disabilitare input
             st.session_state.confirm_terminate_pending = True
@@ -399,71 +390,98 @@ def _handle_llm_error_display(conversation, tald_item, grade, llm_service, mode)
     
     with center_col:
         with st.container(border=True):
+            # 1. Messaggio Errore
             if error_type == "Timeout":
                 st.error("⏱️ **Timeout:** Il paziente non ha risposto entro i tempi previsti.")
             elif error_type == "Connection":
-                st.error(f"❌ **Errore di Connessione**\n\n{error_message}")
-                st.info("💡 **Suggerimento:** Se hai perso la connessione, verifica che il Wi-Fi sia attivo e clicca su Riprova.")
+                st.error(f"🌐 **Errore di Connessione:** {error_message}")
             else:
-                st.error(f"⚠️ **Errore:** {error_message}")
+                st.error(f"❌ **Errore:** {error_message}")
 
-            b1, b2 = st.columns([1, 1])
-        
-            # TASTO SCARICA
-            with b1:
-                # Genera il contenuto SOLO al momento del click, non prima
-                st.download_button(
-                    label="💾 Salva Trascrizione",
-                    data=_generate_transcript_content(conversation, tald_item, mode),
-                    file_name=f"TALD_Trascrizione_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
-                    mime="text/plain",
-                    use_container_width=True,
-                    key=f"download_transcript_{datetime.now().timestamp()}"  
-                )
+            # 2. Bottoni Azione (Logica condizionale)
+            has_messages = conversation.get_message_count() > 0    
 
-            # TASTO RIPROVA
-            with b2:
-                if st.button("🔄 Riprova invio messaggio", use_container_width=True, type="primary"):
-                
-                    try:
-                        # Recupera il tempo congelato
-                        saved_frozen_duration = st.session_state.llm_error.get("frozen_duration", conversation.get_duration_minutes())
+            if has_messages:
+                # Se c'è storico: Mostra DUE bottoni
+                b1, b2 = st.columns([1, 1])
+                with b1:
+                    # Questo garantisce che il nome del file resti identico tra un rerun e l'altro
+                    stable_timestamp = conversation.session_start.strftime('%Y%m%d_%H%M')
+                    
+                    st.download_button(
+                        label="💾 Salva Trascrizione",
+                        data=_generate_transcript_content(conversation, tald_item, mode),
+                        file_name=f"TALD_Trascrizione_{stable_timestamp}.txt",
+                        mime="text/plain",
+                        use_container_width=True,
+                        key="download_transcript_btn"
+                    )
+                with b2:
+                    _render_retry_button(llm_service, tald_item, grade, conversation, last_prompt)
+            else:
+                # Se NON c'è storico: Mostra SOLO bottone Riprova (Centrato)
+                # È inutile salvare una trascrizione vuota
+                _render_retry_button(llm_service, tald_item, grade, conversation, last_prompt)
 
-                       # Chiama la funzione helper 
-                        new_session = _rebuild_session_with_history(
-                            llm_service, tald_item, grade, conversation
-                        )
-                    
-                        # Aggiorna la sessione
-                        st.session_state.chat_session = new_session
-                    
-                        # Rimette il prompt in coda
-                        st.session_state.pending_prompt = last_prompt
 
-                        # IMPORTANTE: Passa il tempo congelato alla fase successiva
-                        st.session_state.frozen_duration_during_retry = saved_frozen_duration
+def _render_retry_button(llm_service, tald_item, grade, conversation, last_prompt):
+    """Helper per il bottone Riprova."""
+    if st.button("🔄 Riprova invio messaggio", use_container_width=True, type="primary"):
+        try:
+            # Recupera il tempo congelato
+            saved_frozen_duration = st.session_state.llm_error.get("frozen_duration", conversation.get_duration_minutes())
+
+            # Chiama la funzione helper 
+            new_session = _rebuild_session_with_history(
+                llm_service, tald_item, grade, conversation
+            )
                     
-                        # Rimuove l'errore
-                        del st.session_state["llm_error"]
+            # Aggiorna la sessione
+            st.session_state.chat_session = new_session
                     
-                        # Riavvia
-                        st.rerun()
+            # Rimette il prompt in coda
+            st.session_state.pending_prompt = last_prompt
+
+            # IMPORTANTE: Passa il tempo congelato alla fase successiva
+            st.session_state.frozen_duration_during_retry = saved_frozen_duration
                     
-                    except Exception as rebuild_error:
-                        st.error(f"❌ Impossibile ricostruire la sessione: {rebuild_error}")
+            # Rimuove l'errore
+            del st.session_state["llm_error"]
+                    
+            # Riavvia
+            st.rerun()
+                    
+        except Exception as rebuild_error:
+            st.error(f"❌ Impossibile ricostruire la sessione: {rebuild_error}")
+
+
+def _cleanup_session_state():
+    """Pulisce le variabili di sessione della chat."""
+    for key in ("llm_error", "pending_prompt", "chat_session", "frozen_duration_during_retry"):
+        if key in st.session_state:
+            del st.session_state[key]
+    if "confirm_terminate_pending" in st.session_state:
+        del st.session_state["confirm_terminate_pending"]
+    if "reset_requested" in st.session_state:
+        del st.session_state["reset_requested"]
+    if "back_to_item_selection" in st.session_state:
+        del st.session_state["back_to_item_selection"]
 
 
 def _generate_transcript_content(conversation, tald_item, mode):
     """Genera il testo della trascrizione in memoria."""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if conversation.session_start:
+        timestamp = conversation.session_start.strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        timestamp = "N/A"    
     
     header = [
         "="*60,
         " TALDLab - Trascrizione Intervista Clinica",
         "="*60,
-        f"Data:      {timestamp}",
-        f"Durata:    {conversation.get_duration_minutes()} minuti",
-        f"Messaggi:  {conversation.get_message_count()}",
+        f"Data Inizio:  {timestamp}",
+        f"Durata:       {conversation.get_duration_minutes()} minuti",
+        f"Messaggi:     {conversation.get_message_count()}",
         "-"*60,
     ]
     
@@ -508,7 +526,13 @@ def _render_header(tald_item: TALDItem, mode: str):
     """, unsafe_allow_html=True)
     
     mode_label = "🎯 Modalità Guidata" if mode == "guided" else "🔍 Modalità Esplorativa"
-    st.markdown(f'<p class="breadcrumb"><strong>{mode_label}</strong> › Intervista</p>', unsafe_allow_html=True)
+    
+    if mode == "guided":
+        breadcrumb = f'<p class="breadcrumb">{mode_label} › Selezione Item › <strong>Intervista</strong></p>'
+    else:
+        breadcrumb = f'<p class="breadcrumb">{mode_label} › <strong>Intervista</strong></p>'
+        
+    st.markdown(breadcrumb, unsafe_allow_html=True)
     st.markdown("---")
 
 
@@ -584,13 +608,18 @@ def render_chat_sidebar(conversation: ConversationHistory, tald_item: TALDItem, 
                     else:
                         st.session_state.reset_requested = True
                     st.rerun()
-
         else:
-            if mode == "guided":
-                if st.button("← Torna a Selezione Item", use_container_width=True):
+            label = "← Torna a Selezione Item" if mode == "guided" else "← Torna a Selezione Modalità"
+            
+            if st.button(label, use_container_width=True):
+                # Se la chat è vuota, esci subito senza chiedere conferma
+                if conversation.get_message_count() == 0:
+                    if mode == "guided":
+                        st.session_state.back_to_item_selection = True
+                    else:
+                        st.session_state.reset_requested = True
+                else:
+                    # Se c'è contenuto, chiedi conferma
                     st.session_state["confirm_back_chat"] = True
-                    st.rerun()
-            else:
-                if st.button("← Torna a Selezione Modalità", use_container_width=True):
-                    st.session_state["confirm_back_chat"] = True
-                    st.rerun()
+                
+                st.rerun()

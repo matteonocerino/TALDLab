@@ -13,8 +13,8 @@ import base64
 import os
 
 import streamlit as st
-import streamlit.components.v1 as components
 
+from src.utils import scroll_to_top
 from src.models.tald_item import TALDItem
 from src.models.evaluation import UserEvaluation
 from src.models.conversation import ConversationHistory
@@ -44,46 +44,35 @@ def render_evaluation_form(
         "BACK_TO_ITEMS" (torna a selezione item)
         None (se nessuna azione)
     """
-
-    # 1. Piazziamo l'ancora in cima assoluta
-    st.markdown('<div id="eval-top-marker" style="position: absolute; top: -100px;"></div>', unsafe_allow_html=True)
-
-    # 2. Script che salta all'ancora (Solo se non l'abbiamo già fatto in questa sessione)
-    # Usiamo una chiave specifica per questa view, così non sporchiamo app.py
-    if 'eval_view_loaded' not in st.session_state:
-        js = """
-        <script>
-            function jumpToTop() {
-                var marker = window.parent.document.getElementById("eval-top-marker");
-                if (marker) {
-                    marker.scrollIntoView({behavior: "auto", block: "start"});
-                }
-            }
-            // Raffica iniziale per vincere il rendering
-            setTimeout(jumpToTop, 50);
-            setTimeout(jumpToTop, 150);
-            setTimeout(jumpToTop, 300);
-        </script>
-        """
-        components.html(js, height=0)
-        st.session_state['eval_view_loaded'] = True
+    # Forza scroll in alto all'apertura della pagina
+    scroll_to_top("eval-top-marker")
 
     # Header con logo
     _render_header(mode)
     
     # Breadcrumb
     mode_label = "🎯 Modalità Guidata" if mode == "guided" else "🔍 Modalità Esplorativa"
-    st.markdown(f'<p class="breadcrumb"><strong>{mode_label}</strong> › Intervista › Valutazione</p>', unsafe_allow_html=True)
+    
+    if mode == "guided":
+        breadcrumb = f'<p class="breadcrumb">{mode_label} › Selezione Item › Intervista › <strong>Valutazione</strong></p>'
+    else:
+        breadcrumb = f'<p class="breadcrumb">{mode_label} › Intervista › <strong>Valutazione</strong></p>'
+
+    st.markdown(breadcrumb, unsafe_allow_html=True)
     st.markdown("---")
 
-    # sidebar riepilogo (ora gestisce anche il back con warning)
-    back_action = _render_evaluation_sidebar(conversation, current_item, mode)
+    # Gestione stati di blocco
+    if 'eval_submitting' not in st.session_state:
+        st.session_state.eval_submitting = False
     
-    # Gestisci azioni dalla sidebar
-    if back_action == "RESET":
-        return "RESET"
-    elif back_action == "BACK_TO_ITEMS":
-        return "BACK_TO_ITEMS"
+    # Se c'è un popup di conferma nella sidebar, blocchiamo il form centrale
+    is_confirming_exit = st.session_state.get("confirm_back_from_eval", False)
+    is_form_disabled = st.session_state.eval_submitting or is_confirming_exit
+
+    # sidebar riepilogo 
+    back_action = _render_evaluation_sidebar(conversation, current_item, mode)
+    if back_action:
+        return back_action
 
     # info box iniziale
     _render_info_box(mode, current_item)
@@ -103,7 +92,7 @@ def render_evaluation_form(
         options = [f"-- Seleziona item --"]
         id_map: Dict[str, Optional[int]] = {options[0]: None}
         for it in tald_items:
-            label = f"Item #{it.id}: {it.title}"
+            label = f"{it.id}. {it.title}"
             options.append(label)
             id_map[label] = it.id
 
@@ -113,7 +102,8 @@ def render_evaluation_form(
             options=options,
             index=0,
             key="eval_item_selector",
-            help="Inizia a digitare per filtrare tra i 30 item TALD disponibili"
+            help="Inizia a digitare per filtrare tra i 30 item TALD disponibili",
+            disabled=is_form_disabled
         )
 
         selected_item_id = id_map.get(selected_label)
@@ -124,8 +114,7 @@ def render_evaluation_form(
             with st.expander(f"📖 Dettagli {selected_item.title}" if selected_item else "📖 Dettagli"):
                 if selected_item:
                     st.markdown(f"**Tipo:** {selected_item.type.capitalize()}")
-                    st.markdown(f"**Descrizione:**")
-                    st.markdown(selected_item.description)
+                    st.markdown(f"**Descrizione:**\n{selected_item.description}")
 
         st.markdown("---")
 
@@ -136,7 +125,7 @@ def render_evaluation_form(
     # determina item di riferimento per legenda: in guided -> current_item, in exploratory -> selected_item
     item_for_legend = current_item if mode == "guided" else (selected_item if selected_item else None)
 
-    grade = _render_dynamic_grade_selector(item_for_legend)
+    grade = _render_dynamic_grade_selector(item_for_legend, disabled=is_form_disabled)
 
     st.markdown("---")
 
@@ -149,7 +138,8 @@ def render_evaluation_form(
         height=120,
         placeholder="Es: Ho notato almeno 4 intrusioni significative durante l'intervista...",
         label_visibility="collapsed",
-        key="eval_notes"
+        key="eval_notes",
+        disabled=is_form_disabled
     )
 
     st.caption("💡 Queste note appariranno nel report finale e ti aiuteranno a riflettere sulla valutazione")
@@ -157,7 +147,7 @@ def render_evaluation_form(
     st.markdown("")
     st.markdown("---")
 
-    # Inizializzazione stati se non esistono
+    # 1. Inizializzazione stati se non esistono
     if 'eval_error_message' not in st.session_state:
         st.session_state.eval_error_message = None
     if 'eval_message_type' not in st.session_state:
@@ -167,40 +157,42 @@ def render_evaluation_form(
     if 'eval_submitting' not in st.session_state:
         st.session_state.eval_submitting = False
 
-    # Callback per "bloccare" il bottone appena cliccato
     def _lock_submission():
         st.session_state.eval_submitting = True
-        st.session_state.eval_error_message = None # Reset errori precedenti
+        st.session_state.eval_error_message = None
 
-    # 1. Layout
-    _, col_center, _ = st.columns([2, 3, 2])
-    error_placeholder = st.empty()
+    # 2. DEFINIZIONE COLONNE CENTRALI
+    _, col_center, _ = st.columns([1, 1.5, 1])
 
-    # 2. Bottone (Disabilitato se stiamo già sottomettendo)
     with col_center:
+        # A. Placeholder Errore (DENTRO la colonna centrale)
+        error_container = st.empty()
+        
+        # B. Spaziatura
+        st.markdown("")
+        
+        # C. Bottone
         st.button(
-            "Conferma Valutazione →", 
+            "Conferma Valutazione ▶️", 
             use_container_width=True, 
             type="primary",
-            disabled=st.session_state.eval_submitting, # <--- SI DISABILITA QUI
-            on_click=_lock_submission # <--- SCATTA SUBITO AL CLICK
+            disabled=is_form_disabled,
+            on_click=_lock_submission
         )
 
-    # 3. Logica di elaborazione 
-    # Se lo stato è "submitting", proviamo a validare e ritornare l'oggetto
+    # 3. Logica di Elaborazione
     if st.session_state.eval_submitting:
         try:
-            # A. VALIDAZIONE ITEM
+            # VALIDAZIONI
             if mode == "exploratory":
                 selected_id_session = st.session_state.get('eval_selected_item_id')
                 if selected_id_session is None:
                     raise EvaluationValidationError("Seleziona l'item TALD che hai identificato per procedere.")
 
-            # B. VALIDAZIONE GRADO
             if grade is None:
                 raise EvaluationValidationError("Seleziona un grado di severità (0-4) per completare la valutazione.")
 
-            # C. CREAZIONE OGGETTO
+            # CREAZIONE OGGETTO
             if mode == "guided":
                 user_eval = EvaluationService.create_guided_evaluation(grade=grade, notes=notes)
             else:
@@ -208,10 +200,9 @@ def render_evaluation_form(
                     item_id=selected_id_session, grade=grade, items=tald_items, notes=notes
                 )
 
-            return user_eval # Ritorna ad app.py per l'elaborazione LLM
+            return user_eval 
 
         except EvaluationValidationError as e:
-            # Se la validazione fallisce, SBLOCCHIAMO subito il bottone
             st.session_state.eval_submitting = False
             st.session_state.eval_error_message = str(e)
             st.session_state.eval_message_type = "warning"
@@ -219,25 +210,33 @@ def render_evaluation_form(
             st.rerun()
             
         except Exception as e:
-            # Se c'è un errore imprevisto qui, SBLOCCHIAMO
             st.session_state.eval_submitting = False
             st.session_state.eval_error_message = f"Errore imprevisto: {str(e)}"
             st.session_state.eval_message_type = "error"
             st.session_state.eval_message_icon = "❌"
             st.rerun()
 
-    # 4. Visualizzazione Errore
+    # 4. Rendering del Messaggio di Errore
     if st.session_state.eval_error_message:
-        with error_placeholder.container():
-            st.markdown("") 
-            _, err_col, _ = st.columns([1, 4, 1]) 
-            with err_col:
-                if st.session_state.eval_message_type == "error":
-                    st.error(st.session_state.eval_error_message, icon=st.session_state.eval_message_icon)
-                else:
-                    st.warning(st.session_state.eval_error_message, icon=st.session_state.eval_message_icon)
+        # Scrive nel container 
+        with error_container.container():
+            if st.session_state.eval_message_type == "error":
+                st.error(st.session_state.eval_error_message, icon=st.session_state.eval_message_icon)
+            else:
+                st.warning(st.session_state.eval_error_message, icon=st.session_state.eval_message_icon)
 
     return None
+
+
+def _clear_error_state():
+    """
+    Helper per pulire i messaggi di errore dalla sessione.
+    Da chiamare quando si esce dalla pagina.
+    """
+    keys = ['eval_error_message', 'eval_message_type', 'eval_message_icon', 'eval_submitting']
+    for k in keys:
+        if k in st.session_state:
+            del st.session_state[k]
 
 
 def _render_header(mode: str):
@@ -268,7 +267,7 @@ def _render_info_box(mode: str, current_item: TALDItem):
         **📚 Modalità Guidata**
         
         Hai condotto l'intervista sapendo che il paziente manifesta:
-        **Item #{current_item.id}: {current_item.title}**
+        **Item {current_item.id}. {current_item.title}**
         
         Ora assegna il **grado di severità** (0-4) che hai osservato durante la conversazione.
         """)
@@ -284,7 +283,7 @@ def _render_info_box(mode: str, current_item: TALDItem):
         """)
 
 
-def _render_dynamic_grade_selector(item: Optional[TALDItem]) -> int:
+def _render_dynamic_grade_selector(item: Optional[TALDItem], disabled: bool = False) -> int:
     """
     Rendering dinamico della scala 0–4 in funzione dell'item selezionato.
     
@@ -317,7 +316,8 @@ def _render_dynamic_grade_selector(item: Optional[TALDItem]) -> int:
         options=options,
         index=None,
         key="eval_grade_selector",
-        help="Scegli il livello che più rappresenta la manifestazione osservata"
+        help="Scegli il livello che più rappresenta la manifestazione osservata",
+        disabled=disabled
     )
 
     if selected_label is None:
@@ -444,7 +444,7 @@ def _render_evaluation_sidebar(
         with col1:
             st.metric("Messaggi", conversation.get_message_count())
         with col2:
-            st.metric("Durata", f"{conversation.get_duration_minutes()} min")
+            st.metric("Minuti", f"{conversation.get_duration_minutes()}")
 
         st.caption(f"Parole scambiate: {conversation.get_total_words()}")
 
@@ -479,14 +479,11 @@ def _render_evaluation_sidebar(
             return _render_sidebar_back_warning(mode)
         
         # Bottone normale
-        if mode == "guided":
-            if st.button("← Torna a Selezione Item", use_container_width=True):
-                st.session_state.confirm_back_from_eval = True
-                st.rerun()
-        else:
-            if st.button("← Torna a Selezione Modalità", use_container_width=True):
-                st.session_state.confirm_back_from_eval = True
-                st.rerun()
+        label = "← Torna a Selezione Item" if mode == "guided" else "← Torna a Selezione Modalità"
+        # Disabilita il bottone se stiamo inviando
+        if st.button(label, use_container_width=True, disabled=st.session_state.eval_submitting):
+            st.session_state.confirm_back_from_eval = True
+            st.rerun()
     
     return None
 
@@ -502,7 +499,7 @@ def _render_sidebar_back_warning(mode: str) -> Optional[str]:
     st.warning("""
     ⚠️ **Attenzione**
     
-    Se torni indietro perderai la valutazione corrente.
+    Se torni indietro perderai la sessione corrente.
     Confermi?
     """)
 
@@ -517,6 +514,8 @@ def _render_sidebar_back_warning(mode: str) -> Optional[str]:
         if st.button("✅ Conferma", use_container_width=True, type="primary", key="confirm_back_eval"):
             del st.session_state["confirm_back_from_eval"]
             
+            _clear_error_state()
+
             if mode == "guided":
                 return "BACK_TO_ITEMS"
             else:

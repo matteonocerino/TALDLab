@@ -12,9 +12,8 @@ import streamlit as st
 from typing import Optional, List
 import base64
 import os
-import streamlit.components.v1 as components
-import time
 
+from src.utils import scroll_to_top
 from src.models.tald_item import TALDItem
 
 
@@ -35,24 +34,8 @@ def render_item_selection(tald_items: List[TALDItem]) -> Optional[TALDItem]:
     
     # NOTA: Lo stile di questa pagina è definito nel file globale 'src/views/style.css'.
 
-    # 1. Piazziamo un'ancora invisibile in cima alla pagina
-    st.markdown('<div id="selection-view-top" style="position: absolute; top: -150px; left: 0;"></div>', unsafe_allow_html=True)
-    
-    # 2. Script che forza il salto all'ancora 
-    js_main = """
-    <script>
-        function jumpToTop() {
-            try {
-                var marker = window.parent.document.getElementById("selection-view-top");
-                if (marker) {
-                    marker.scrollIntoView({behavior: "auto", block: "start"});
-                }
-            } catch (e) {}
-        }
-        setTimeout(jumpToTop, 100);
-    </script>
-    """
-    components.html(js_main, height=0)
+    # Forza scroll in alto all'apertura della pagina
+    scroll_to_top("selection-view-top")
     
     render_item_selection_sidebar(tald_items)
 
@@ -185,29 +168,8 @@ def _render_item_details(item: TALDItem):
 def _show_item_confirmation(item: TALDItem) -> Optional[TALDItem]:
     """Mostra un banner di conferma e i pulsanti per iniziare o annullare."""
 
-    # Iniettiamo un secondo script JS qui dentro.
-    js_confirm = f"""
-    <script>
-        function forceJumpToTop() {{
-            try {{
-                // Punta all'ancora globale definita all'inizio del file
-                var marker = window.parent.document.getElementById("selection-view-top");
-                if (marker) {{
-                    marker.scrollIntoView({{behavior: "auto", block: "start"}});
-                }}
-            }} catch (e) {{}}
-        }}
-        
-        // Raffica di scroll per vincere il rendering della pagina di conferma
-        forceJumpToTop();
-        setTimeout(forceJumpToTop, 50);
-        setTimeout(forceJumpToTop, 200);
-        setTimeout(forceJumpToTop, 500);
-        
-        // Timestamp invisibile per forzare reload: {time.time()}
-    </script>
-    """
-    components.html(js_confirm, height=0)
+    # Forza scroll in alto all'apertura della pagina
+    scroll_to_top("selection-view-top")
 
     st.markdown("## Convalida la tua scelta")
     st.success(f"✅ **Item Selezionato:** {item.id}. {item.title}")
@@ -219,12 +181,12 @@ def _show_item_confirmation(item: TALDItem) -> Optional[TALDItem]:
     
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("← Annulla e scegli un altro item", use_container_width=True, key="cancel_selection"):
+        if st.button("⬅️ Annulla e scegli un altro item", use_container_width=True, key="cancel_selection"):
             del st.session_state['pending_item_selection']
             st.rerun()
 
     with col2:
-        if st.button("▶️ Conferma e Inizia Intervista", use_container_width=True, key="confirm_start"):
+        if st.button("Conferma e Inizia Intervista ▶️", use_container_width=True, key="confirm_start"):
             del st.session_state['pending_item_selection']
             return item
     

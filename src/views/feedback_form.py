@@ -10,10 +10,12 @@ Implementa RF_10 del RAD
 """
 
 import streamlit as st
-import streamlit.components.v1 as components
 import os
 import base64
+
+from src.utils import scroll_to_top
 from src.services.feedback_service import FeedbackService
+
 
 def render_feedback_form(
     item_id: int,
@@ -30,23 +32,26 @@ def render_feedback_form(
     if "fb_submission_status" not in st.session_state:
         st.session_state.fb_submission_status = "pending"
 
-    # 1. Ancora scroll
-    st.markdown('<div id="feedback-top-marker" style="position: absolute; top: -100px;"></div>', unsafe_allow_html=True)
-    components.html("""
-        <script>
-            window.parent.document.getElementById("feedback-top-marker").scrollIntoView({behavior: "auto", block: "start"});
-        </script>
-    """, height=0)
+    # Forza scroll in alto all'apertura della pagina
+    scroll_to_top("feedback-top-marker")
 
     # 2. Header
     _render_header()
     
-    # 3. Sidebar (Layout avanzato HTML)
+    # 3. Sidebar
     _render_sidebar(item_id, item_title, mode, score)
     
     # Breadcrumb
     mode_label = "🎯 Modalità Guidata" if mode == "guided" else "🔍 Modalità Esplorativa"
-    st.markdown(f'<p class="breadcrumb">{mode_label} › Intervista › Valutazione › Report › <strong>Feedback</strong></p>', unsafe_allow_html=True)
+    
+    if mode == "guided":
+        # In guidata mostriamo lo step "Selezione Item"
+        breadcrumb = f'<p class="breadcrumb">{mode_label} › Selezione Item › Intervista › Valutazione › Report › <strong>Feedback</strong></p>'
+    else:
+        # In esplorativa saltiamo direttamente all'Intervista
+        breadcrumb = f'<p class="breadcrumb">{mode_label} › Intervista › Valutazione › Report › <strong>Feedback</strong></p>'
+
+    st.markdown(breadcrumb, unsafe_allow_html=True)
     st.markdown("---")
     
     is_disabled = st.session_state.fb_submission_status != "pending"

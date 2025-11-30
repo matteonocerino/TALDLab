@@ -13,29 +13,24 @@ Anno Accademico: 2025/2026
 import streamlit as st
 import random
 import time
-from pathlib import Path
 
 # Import Models
 from src.models.session_state import SessionState, SessionPhase
-from src.models.tald_item import TALDItem
 from src.models.conversation import ConversationHistory
-from src.models.evaluation import GroundTruth
 
 # Import Services
 from src.services.configuration_service import ConfigurationService, ConfigurationError
 from src.services.llm_service import LLMService, LLMTimeoutError, LLMConnectionError
 from src.services.conversation_manager import ConversationManager
-from src.services.evaluation_service import EvaluationService
 from src.services.comparison_engine import ComparisonEngine
 from src.services.report_generator import ReportGenerator
-from src.services.feedback_service import FeedbackService
 
 # Import Views
 from src.views.mode_selection import render_mode_selection
 from src.views.item_selection import render_item_selection
 from src.views.chat_interface import render_chat_interface
 from src.views.evaluation_form import render_evaluation_form
-from src.views.report_view import render_report_view, handle_pdf_download
+from src.views.report_view import render_report_view
 from src.views.feedback_form import render_feedback_form
 
 
@@ -190,7 +185,7 @@ def handle_item_selection():
     
     Implementa RF_2: gestione item TALD.
     """
-    # La funzione render_item_selection ora può restituire l'item, "reset" o None
+    # La funzione render_item_selection può restituire l'item, "reset" o None
     selected_item_or_action = render_item_selection(st.session_state.tald_items)
     
     # Caso 1: L'utente ha cliccato "Torna a Selezione Modalità"
@@ -266,6 +261,7 @@ def handle_evaluation():
     current_item = st.session_state.current_item
     ground_truth = st.session_state.session.ground_truth
     
+    # Renderizza il form e ottieni l'input
     user_evaluation = render_evaluation_form(
         tald_items=st.session_state.tald_items,
         current_item=current_item,
@@ -273,12 +269,10 @@ def handle_evaluation():
         mode=ground_truth.mode
     )
 
-    # Torna a selezione modalità (esplorativa)
+    # Gestione navigazione (Back/Reset)
     if user_evaluation == "RESET":
         reset_application()
         st.rerun()
-    
-    # Torna a selezione item (guidata)
     elif user_evaluation == "BACK_TO_ITEMS":
         st.session_state.session.phase = SessionPhase.ITEM_SELECTION
         st.session_state.conversation.clear()  
@@ -288,6 +282,7 @@ def handle_evaluation():
             del st.session_state['current_item']
         st.rerun()
     
+    # Se abbiamo una valutazione valida, procediamo con la generazione report
     elif user_evaluation:
         try:
             # 1. Confronto con ground truth
@@ -297,105 +292,89 @@ def handle_evaluation():
             )
             
             st.markdown("")
-           # 2. Generazione report con Status Bar animata
-            with st.status("🧠 Analisi clinica in corso...", expanded=True) as status:
-                try:
-                    st.write("🔍 Analisi della conversazione...")
-                    time.sleep(0.8)
-                    
-                    st.write("🩺 Consultazione Paziente Virtuale (Gemini)...")
-                    report = st.session_state.report_generator.generate_report(
-                        ground_truth=ground_truth,
-                        user_evaluation=user_evaluation,
-                        result=comparison_result,
-                        conversation=st.session_state.conversation,
-                        tald_item=current_item
-                    )
-
-                    st.write("📄 Formattazione report finale...")
-                    time.sleep(0.6)
-                    
-                    # Aggiorna stato finale SUCCESSO
-                    status.update(label="✅ Report generato con successo!", state="complete", expanded=False)
-                    time.sleep(0.8)
-                    
-                except LLMTimeoutError as e:
-                    # SBLOCCO IL BOTTONE PER RIPROVARE
-                    st.session_state.eval_submitting = False
-                    
-                    st.session_state.eval_message_type = "error"
-                    st.session_state.eval_message_icon = "⏱️"
-                    st.session_state.eval_error_message = f"""
-                    **Timeout durante la generazione del report**
-                    
-                    {str(e)}
-                    
-                    Il sistema non ha ricevuto risposta entro i tempi previsti.
-                    Puoi riprovare cliccando nuovamente "Conferma Valutazione".
-                    """
-                    st.rerun()  
-                
-                except LLMConnectionError as e:
-                    # SBLOCCO IL BOTTONE PER RIPROVARE
-                    st.session_state.eval_submitting = False
-
-                    st.session_state.eval_message_type = "error"
-                    st.session_state.eval_message_icon = "🌐"
-                    st.session_state.eval_error_message = f"""
-                    **Errore di connessione**
-                    
-                    {str(e)}
-                    
-                    Possibili cause:
-                    - Limite di richieste Gemini superato (attendi 1 minuto)
-                    - Quota giornaliera esaurita
-                    - Problemi di rete
-                    
-                    Puoi riprovare cliccando nuovamente "Conferma Valutazione".
-                    """
-
-                    try:
-                        # 1. Ricrea il servizio LLM
-                        new_llm_service = LLMService(st.session_state.config)
-                        st.session_state.llm_service = new_llm_service
-                        
-                        # 2. Aggiorna i servizi che dipendono da lui (ReportGenerator)
-                        st.session_state.report_generator = ReportGenerator(new_llm_service)
-
-                        # Aggiorna il conversation_manager
-                        st.session_state.conversation_manager.llm_service = new_llm_service
-        
-                        # Invalida la sessione chat vecchia (perché legata al vecchio service)
-                        if 'chat_session' in st.session_state:
-                            del st.session_state['chat_session']
-                        
-                    except Exception:
-                        pass
-
-                    st.rerun()
             
-            # 3. Salva report e procedi
+            # 2. Generazione report con Status Bar animata
+            with st.status("🧠 Analisi clinica in corso...", expanded=True) as status:
+                st.write("🔍 Analisi della conversazione...")
+                time.sleep(0.8)
+                
+                st.write("🩺 Consultazione Paziente Virtuale (Gemini)...")
+                
+                report = st.session_state.report_generator.generate_report(
+                    ground_truth=ground_truth,
+                    user_evaluation=user_evaluation,
+                    result=comparison_result,
+                    conversation=st.session_state.conversation,
+                    tald_item=current_item
+                )
+
+                st.write("📄 Formattazione report finale...")
+                time.sleep(0.6)
+                
+                status.update(label="✅ Report generato con successo!", state="complete", expanded=False)
+                time.sleep(0.8)
+            
+            # 3. Successo: Salva e procedi
             st.session_state.session.submit_evaluation(user_evaluation, comparison_result)
             st.session_state.report = report
-            
             st.rerun()
-        
-        except Exception as e:
-            # SBLOCCO IL BOTTONE PER RIPROVARE
-            st.session_state.eval_submitting = False
 
+        # --- GESTIONE ERRORI ---
+
+        except LLMTimeoutError as e:
+            # Timeout
+            st.session_state.eval_submitting = False
             st.session_state.eval_message_type = "error"
-            st.session_state.eval_message_icon = "❌"
+            st.session_state.eval_message_icon = "⏱️"
+            st.session_state.eval_error_message = (
+                f"**Timeout Generazione Report**\n\n"
+                f"Il paziente non ha risposto in tempo.\n"
+                f"Puoi riprovare cliccando di nuovo."
+            )
+            st.rerun()  
+        
+        except LLMConnectionError as e:
+            # Errore di Rete / API
+            st.session_state.eval_submitting = False
+            st.session_state.eval_message_type = "error"
+            st.session_state.eval_message_icon = "🌐" 
             st.session_state.eval_error_message = f"""
-            **Errore imprevisto dell'applicazione**
+            **Errore di connessione**
             
-            Si è verificato un problema imprevisto.
-            Dettagli: {str(e)}
+            {str(e)}
             
-            Prova a cliccare di nuovo o ricarica la pagina.
+            **Possibili cause:**
+            - Limite di richieste Gemini superato (attendi 1 minuto)
+            - Quota giornaliera esaurita
+            - Problemi di rete (Wi-Fi)
+            
+            Puoi riprovare cliccando nuovamente "Conferma Valutazione".
             """
 
-            st.rerun() 
+            # Tentativo di ripristino silenzioso
+            try:
+                new_llm = LLMService(st.session_state.config)
+                st.session_state.llm_service = new_llm
+                st.session_state.report_generator = ReportGenerator(new_llm)
+                st.session_state.conversation_manager.llm_service = new_llm
+                if 'chat_session' in st.session_state:
+                    del st.session_state['chat_session']
+            except:
+                pass
+
+            st.rerun()
+
+        except Exception as e:
+            # Errore Generico
+            st.session_state.eval_submitting = False
+            st.session_state.eval_message_type = "error"
+            st.session_state.eval_message_icon = "❌"
+            st.session_state.eval_error_message = (
+                f"**Errore imprevisto**\n\n"
+                f"Dettagli: {str(e)}"
+            )
+            st.rerun()
+
 
 def handle_report():
     """
@@ -424,20 +403,22 @@ def handle_feedback():
     """
     report = st.session_state.report
     
-    completed = render_feedback_form(
+    result = render_feedback_form(
         item_id=report.tald_item.id,
         item_title=report.tald_item.title,
         mode=report.ground_truth.mode,
         score=report.result.score
     )
     
-    if completed:
-        st.balloons()
-        st.success("🎉 Grazie per aver usato TALDLab!")
+    if result == True:
+        # Utente ha cliccato "Nuova Simulazione"
+        reset_application()
+        st.rerun()
         
-        if st.button("🔄 Avvia Nuova Simulazione", use_container_width=True, type="primary"):
-            reset_application()
-            st.rerun()
+    elif result == "back_to_report":
+        # Utente vuole rivedere il report
+        st.session_state.show_feedback = False # Spegni flag feedback
+        st.rerun()
 
 
 # ============================================================================

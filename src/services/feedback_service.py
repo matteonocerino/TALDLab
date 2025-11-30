@@ -23,7 +23,6 @@ from typing import Optional, Dict, Any, List
 from pathlib import Path
 
 # Lock per gestire l'accesso concorrente al file JSON (Thread-Safety)
-# Necessario se più utenti (o thread) provano a scrivere contemporaneamente.
 _file_lock = threading.Lock()
 
 
@@ -200,7 +199,7 @@ class FeedbackService:
                 # B. Append del nuovo dato
                 current_data.append(entry_to_save)
                 
-                # C. Scrittura atomica (si spera) sul file
+                # C. Scrittura atomica sul file
                 with open(FeedbackService.FEEDBACK_FILE, 'w', encoding='utf-8') as f:
                     json.dump(current_data, f, ensure_ascii=False, indent=2)
                     

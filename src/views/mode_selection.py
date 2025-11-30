@@ -64,7 +64,7 @@ def render_mode_selection() -> str | None:
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button("Avvia Modalità Guidata →", key="guided", use_container_width=True):
+        if st.button("Avvia Modalità Guidata ▶️", key="guided", use_container_width=True):
             return "guided"
 
     # Modalità esplorativa
@@ -82,7 +82,7 @@ def render_mode_selection() -> str | None:
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button("Avvia Modalità Esplorativa →", key="exploratory", use_container_width=True):
+        if st.button("Avvia Modalità Esplorativa ▶️", key="exploratory", use_container_width=True):
             return "exploratory"
 
     # Info footer

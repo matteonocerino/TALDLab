@@ -51,7 +51,7 @@ class ConversationMessage:
         if not isinstance(self.content, str) or len(self.content.strip()) == 0:
             raise ValueError("Content non può essere vuoto")
 
-        # Protezione da contenuti eccessivamente lunghi (robustezza UI Streamlit)
+        # Protezione da contenuti eccessivamente lunghi 
         if len(self.content) > 5000:
             raise ValueError("Content eccede la lunghezza massima consentita (5000 caratteri).")
         

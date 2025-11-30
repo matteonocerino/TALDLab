@@ -13,6 +13,7 @@ Implementa RF_3, RF_4, RF_11 del RAD
 
 import random
 import threading
+import socket
 from typing import Dict, Optional
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
@@ -85,6 +86,19 @@ class LLMService:
         except Exception as e:
             raise LLMConnectionError(f"Errore nella configurazione di Gemini API: {e}")
     
+    def _check_connectivity(self):
+        """
+        Esegue un test rapido di connettività (ping a Google DNS).
+        Se fallisce, alza immediatamente LLMConnectionError.
+        Questo evita di aspettare il timeout di 12s se manca la rete.
+        """
+        try:
+            # Prova a connettersi a Google DNS (8.8.8.8) sulla porta 53 (DNS)
+            # Timeout brevissimo (2 secondi)
+            socket.create_connection(("8.8.8.8", 53), timeout=2)
+        except OSError:
+            raise LLMConnectionError("Nessuna connessione internet rilevata.")
+        
     def _generate_patient_background(self) -> str:
         """Genera un background paziente randomizzato."""
         nomi_m = ["Marco", "Luca", "Giuseppe", "Andrea", "Matteo", "Alessandro", 
@@ -374,6 +388,12 @@ Attendi la prima domanda dell'intervistatore."""
     
     def generate_response(self, chat_session: genai.ChatSession, user_message: str) -> str:
         """Genera una risposta dal paziente virtuale."""
+
+        # 1. Controllo connettività
+        # Se manca la rete, falliamo SUBITO (in 2s) invece che dopo 12s
+        self._check_connectivity()
+
+        # 2. Esecuzione richiesta LLM
         response_container = {"text": None, "error": None}
 
         def call_model():
@@ -391,7 +411,8 @@ Attendi la prima domanda dell'intervistatore."""
 
         thread = threading.Thread(target=call_model, daemon=True)
         thread.start()
-        thread.join(timeout=self.timeout)
+
+        thread.join(timeout=self.timeout + 1.0)
 
         if thread.is_alive():
             raise LLMTimeoutError("Timeout: il paziente virtuale non ha risposto in tempo.")
@@ -399,8 +420,15 @@ Attendi la prima domanda dell'intervistatore."""
         if response_container["error"]:
             e = response_container["error"]
 
-            if isinstance(e, DeadlineExceeded):
+            # Intercettiamo errori di connessione specifici di Google API
+            error_str = str(e).lower()
+
+            if isinstance(e, DeadlineExceeded) or "deadline" in error_str:
                 raise LLMTimeoutError("Timeout interno di Gemini.")
+
+            # Qui catturiamo la mancanza di rete vera e propria
+            if "connection" in error_str or "network" in error_str or "socket" in error_str:
+                 raise LLMConnectionError(f"Connessione fallita: {e}")
 
             if isinstance(e, ResourceExhausted):
                 msg = str(e).lower()
@@ -416,7 +444,7 @@ Attendi la prima domanda dell'intervistatore."""
         if not response_container["text"]:
             raise LLMTimeoutError("Risposta non prodotta in tempo.")
 
-        return response_container["text"]
+        return response_container["text"] 
 
     def generate_clinical_explanation(
         self,
@@ -428,7 +456,9 @@ Attendi la prima domanda dell'intervistatore."""
         Genera una spiegazione clinica dei fenomeni osservati nella conversazione.
         Differenzia l'analisi tra disturbi oggettivi e soggettivi.
         """
-    
+        # Anche qui controllo preventivo
+        self._check_connectivity()
+
         report_timeout = self.timeout
         response_container = {"text": None, "error": None}
     
@@ -514,7 +544,7 @@ Scrivi in italiano, in modo chiaro e professionale, come per uno studente di psi
         # Esegui in thread con timeout
         thread = threading.Thread(target=call_model, daemon=True)
         thread.start()
-        thread.join(timeout=report_timeout)
+        thread.join(timeout=report_timeout + 1.0)
     
         # 1. Timeout esterno
         if thread.is_alive():
@@ -538,7 +568,7 @@ Scrivi in italiano, in modo chiaro e professionale, come per uno studente di psi
         
             # Errori di rete generici
             error_msg = str(e).lower()
-            if any(keyword in error_msg for keyword in ["network", "connection", "timeout", "unreachable"]):
+            if any(keyword in error_msg for keyword in ["network", "connection", "socket", "unreachable", "failed to connect"]):
                 raise LLMConnectionError(f"Errore di connessione di rete: {e}")
         
             raise LLMConnectionError(f"Errore Gemini: {e}")
@@ -550,14 +580,23 @@ Scrivi in italiano, in modo chiaro e professionale, come per uno studente di psi
         return response_container["text"]
     
     def test_connection(self) -> bool:
-        """Testa la connessione all'API Gemini."""
+        """
+        Testa la connessione all'API Gemini.
+        Esegue prima un check di rete locale, poi una chiamata reale all'API.
+        """
+
+        # 1. Check preventivo: se non c'è rete, fallisce SUBITO (in 2s)
+        self._check_connectivity()
+
         try:
             self.model.generate_content(
                 "Test",
                 generation_config=genai.types.GenerationConfig(
                     temperature=0,
                     max_output_tokens=5,
-                )
+                ),
+                #Timeout breve specifico per il test 
+                request_options={'timeout': 10}
             )
             return True
         except Exception as e:

@@ -22,9 +22,6 @@ config/credentials.json
 # Feedback e log
 feedback_log.json
 
-# Trascrizioni TALD
-TALDLab_Trascrizione_*.txt
-
 # IDE
 .vscode/
 .idea/
@@ -34,6 +31,3 @@ TALDLab_Trascrizione_*.txt
 # OS
 .DS_Store
 Thumbs.db
-
-# Report generati
-reports/*.pdf

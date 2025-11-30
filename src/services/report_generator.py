@@ -32,7 +32,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from src.models.evaluation import UserEvaluation, GroundTruth, EvaluationResult
 from src.models.conversation import ConversationHistory
 from src.models.tald_item import TALDItem
-from src.services.llm_service import LLMService
+from src.services.llm_service import LLMService, LLMTimeoutError, LLMConnectionError
 
 
 class Report:
@@ -126,9 +126,15 @@ class ReportGenerator:
                 conversation_history=conversation,
                 grade=ground_truth.grade
             )
+
+        except (LLMTimeoutError, LLMConnectionError):
+            # Se è un errore di rete/timeout, NON usare il fallback.
+            # Rilancia l'errore così app.py può mostrare il bottone "Riprova".
+            raise    
+
         except Exception:
-            # Fallback intelligente: Se l'IA non è disponibile (es. quota esaurita, offline),
-            # generiamo comunque un report utile usando i dati statici del manuale.
+            # Solo per altri errori imprevisti (es. bug di parsing interno),
+            # usiamo il fallback statico per non far crashare tutto.
             clinical_explanation = self._generate_basic_explanation(tald_item, ground_truth.grade)
         
         # 2. Calcolo metriche conversazione
@@ -477,7 +483,7 @@ class ReportGenerator:
         # Footer (Piè di pagina)
         elements.append(Spacer(1, 1*cm))
         elements.append(Paragraph(
-            f"Generato da TALDLab il {datetime.now().strftime('%d/%m/%Y')}", 
+            f"Generato da TALDLab il {report.timestamp.strftime('%d/%m/%Y')}",
             ParagraphStyle('Footer', parent=styles['Italic'], fontSize=8, textColor=colors.grey, alignment=TA_CENTER)
         ))
 

@@ -41,7 +41,7 @@ class ComparisonEngine:
         >>> print(f"Grado corretto: {result.grade_correct}")
     """
     
-    # Pesi per il calcolo del punteggio (configurabili come costanti)
+    # Pesi per il calcolo del punteggio 
     SCORE_ITEM_CORRECT = 50      # 50 punti per item corretto (esplorativa)
     SCORE_GRADE_EXACT = 50       # 50 punti per grado esatto
     SCORE_GRADE_CLOSE = 25       # 25 punti per grado vicino (±1)
