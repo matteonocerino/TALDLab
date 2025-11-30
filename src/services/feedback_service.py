@@ -1,43 +1,55 @@
 """
 FeedbackService - Servizio per gestione feedback utenti
 
-Questo modulo gestisce la raccolta e persistenza dei feedback:
-- Validazione dati feedback
-- Anonimizzazione (nessun dato identificativo)
-- Salvataggio in feedback_log.json (append-only)
-- Aggiunta metadati (timestamp, modalità, item)
+Questo modulo gestisce la raccolta, la validazione e la persistenza dei feedback
+qualitativi forniti dagli utenti al termine della simulazione.
 
-Control del pattern Entity-Control-Boundary (vedi RAD sezione 2.6.1)
-Implementa RF_10 del RAD
+Responsabilità principali:
+- Validazione formale dei dati di input (range numerici, lunghezza testi)
+- Costruzione dell'entità Feedback (Entity)
+- Anonimizzazione dei dati (esclusione di identificativi personali)
+- Persistenza su filesystem (JSON) con gestione della concorrenza
+- Calcolo statistiche aggregate per monitoraggio qualità
+
+Pattern Architetturale: Control (Componente della logica di business)
+Riferimento RAD: Sezione 2.6.1 (Dizionario dei dati - FeedbackService)
+Implementa Requisito Funzionale: RF_10
 """
 
 import json
+import threading
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any, List
 from pathlib import Path
+
+# Lock per gestire l'accesso concorrente al file JSON (Thread-Safety)
+# Necessario se più utenti (o thread) provano a scrivere contemporaneamente.
+_file_lock = threading.Lock()
 
 
 class Feedback:
     """
-    Rappresenta un feedback utente.
+    Entity che rappresenta un singolo feedback utente.
     
-    Entity per i feedback raccolti post-simulazione.
+    Incapsula i dati valutativi e i metadati della sessione, garantendo
+    che la struttura dati sia coerente prima della serializzazione.
     
     Attributes:
-        overall_rating (int): Valutazione generale (1-5)
-        realism_rating (int): Realismo simulazione (1-5)
-        usefulness_rating (int): Utilità didattica (1-5)
-        comments (str): Commenti liberi
-        metadata (dict): Metadati non identificativi (item, modalità, timestamp)
+        overall_rating (Optional[int]): Valutazione generale (scala 1-5)
+        realism_rating (Optional[int]): Realismo percepito (scala 1-5)
+        usefulness_rating (Optional[int]): Utilità didattica (scala 1-5)
+        comments (str): Commenti qualitativi liberi
+        metadata (Dict): Dati di contesto non identificativi (item, modalità)
+        timestamp (datetime): Marca temporale di creazione
     """
     
     def __init__(
         self,
-        overall_rating: Optional[int] = None,
-        realism_rating: Optional[int] = None,
-        usefulness_rating: Optional[int] = None,
-        comments: str = "",
-        metadata: Optional[dict] = None
+        overall_rating: Optional[int],
+        realism_rating: Optional[int],
+        usefulness_rating: Optional[int],
+        comments: str,
+        metadata: Dict[str, Any]
     ):
         self.overall_rating = overall_rating
         self.realism_rating = realism_rating
@@ -46,8 +58,13 @@ class Feedback:
         self.metadata = metadata or {}
         self.timestamp = datetime.now()
     
-    def to_dict(self) -> dict:
-        """Converte feedback in dizionario per JSON."""
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Serializza l'entità in un dizionario compatibile con JSON.
+        
+        Returns:
+            Dict: Rappresentazione strutturata del feedback.
+        """
         return {
             "timestamp": self.timestamp.isoformat(),
             "ratings": {
@@ -62,189 +79,182 @@ class Feedback:
 
 class FeedbackService:
     """
-    Service per gestione raccolta e persistenza feedback.
+    Service (Control) per la gestione del ciclo di vita dei feedback.
     
-    Responsabilità:
-    - Validare dati feedback (RF_10)
-    - Anonimizzare (nessun dato identificativo)
-    - Salvare in feedback_log.json in modalità append
-    - Aggiungere metadati non identificativi
-    
-    Come da RAD 2.6.1 - FeedbackService:
-    "Gestisce la raccolta e persistenza del feedback qualitativo.
-    Valida i dati inseriti dall'utente, costruisce l'oggetto Feedback
-    con metadati anonimi e lo appende al file feedback_log.json in
-    modalità append-only. Garantisce l'anonimizzazione completa senza
-    associazione a dati identificativi personali."
-    
-    Example:
-        >>> feedback_data = {
-        ...     "overall_rating": 5,
-        ...     "realism_rating": 4,
-        ...     "usefulness_rating": 5,
-        ...     "comments": "Molto utile per l'apprendimento"
-        ... }
-        >>> metadata = {
-        ...     "item_id": 1,
-        ...     "item_title": "Circumstantiality",
-        ...     "mode": "guided"
-        ... }
-        >>> FeedbackService.save_feedback(feedback_data, metadata)
+    Questa classe funge da interfaccia tra la View (FeedbackForm) e il livello
+    di persistenza dati (File System). Implementa controlli di integrità
+    e logiche di aggregazione.
     """
     
-    FEEDBACK_FILE = "feedback_log.json"
+    # Percorso del file di persistenza
+    FEEDBACK_FILE = Path("feedback_log.json")
     
     @staticmethod
-    def validate_rating(rating: any, field_name: str) -> Optional[int]:
+    def _validate_rating(value: Any, field_name: str) -> Optional[int]:
         """
-        Valida un rating (1-5 o None).
+        Validazione interna per i valori numerici di rating.
+        
+        Args:
+            value: Il valore da controllare (può essere None, int, str).
+            field_name: Nome del campo per messaggi di errore.
+            
+        Returns:
+            Optional[int]: Il valore intero validato o None.
+            
+        Raises:
+            ValueError: Se il valore non è un intero valido tra 1 e 5.
         """
-        if rating is None or rating == "":
+        if value is None:
             return None
-        
+            
         try:
-            rating_int = int(rating)
-        except (TypeError, ValueError):
-            raise ValueError(
-                f"{field_name} deve essere un numero intero, ricevuto: {type(rating).__name__}"
-            )
-        
-        if not (1 <= rating_int <= 5):
-            raise ValueError(
-                f"{field_name} deve essere compreso tra 1 e 5, ricevuto: {rating_int}"
-            )
-        
-        return rating_int
-    
+            int_val = int(value)
+        except (ValueError, TypeError):
+            raise ValueError(f"Il campo '{field_name}' deve essere un numero.")
+            
+        if not (1 <= int_val <= 5):
+            raise ValueError(f"Il campo '{field_name}' deve essere compreso tra 1 e 5.")
+            
+        return int_val
+
     @staticmethod
-    def validate_comments(comments: any) -> str:
+    def _validate_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Valida e normalizza i commenti.
+        Sanitizza i metadati per assicurare che non contengano dati sensibili
+        imprevisti e abbiano la struttura minima richiesta.
         """
-        if comments is None:
-            return ""
-        
-        if not isinstance(comments, str):
-            comments = str(comments)
-        
-        return comments.strip()
-    
-    @staticmethod
-    def create_feedback(
-        overall_rating: Optional[int] = None,
-        realism_rating: Optional[int] = None,
-        usefulness_rating: Optional[int] = None,
-        comments: str = "",
-        metadata: Optional[dict] = None
-    ) -> Feedback:
-        """
-        Crea e valida un oggetto Feedback.
-        """
-        validated_overall = FeedbackService.validate_rating(overall_rating, "Overall rating")
-        validated_realism = FeedbackService.validate_rating(realism_rating, "Realism rating")
-        validated_usefulness = FeedbackService.validate_rating(usefulness_rating, "Usefulness rating")
-        validated_comments = FeedbackService.validate_comments(comments)
-        
-        if (validated_overall is None and 
-            validated_realism is None and 
-            validated_usefulness is None and 
-            not validated_comments):
-            raise ValueError("Il feedback deve contenere almeno una valutazione o un commento")
-        
-        return Feedback(
-            overall_rating=validated_overall,
-            realism_rating=validated_realism,
-            usefulness_rating=validated_usefulness,
-            comments=validated_comments,
-            metadata=metadata or {}
-        )
-    
-    @staticmethod
-    def save_feedback(
-        feedback_data: dict,
-        metadata: Optional[dict] = None
-    ) -> bool:
-        """
-        Salva il feedback nel file feedback_log.json.
-        """
-        feedback = FeedbackService.create_feedback(
-            overall_rating=feedback_data.get("overall_rating"),
-            realism_rating=feedback_data.get("realism_rating"),
-            usefulness_rating=feedback_data.get("usefulness_rating"),
-            comments=feedback_data.get("comments", ""),
-            metadata=metadata
-        )
-        
-        feedback_list = []
-        feedback_path = Path(FeedbackService.FEEDBACK_FILE)
-        
-        if feedback_path.exists():
-            try:
-                with open(feedback_path, 'r', encoding='utf-8') as f:
-                    feedback_list = json.load(f)
-            except json.JSONDecodeError:
-                feedback_list = []
-        
-        feedback_list.append(feedback.to_dict())
-        
-        try:
-            with open(feedback_path, 'w', encoding='utf-8') as f:
-                json.dump(feedback_list, f, ensure_ascii=False, indent=2)
-            return True
-        except IOError as e:
-            raise IOError(f"Errore nel salvataggio del feedback: {e}")
-    
-    @staticmethod
-    def get_feedback_count() -> int:
-        """
-        Restituisce il numero di feedback salvati.
-        """
-        feedback_path = Path(FeedbackService.FEEDBACK_FILE)
-        
-        if not feedback_path.exists():
-            return 0
-        
-        try:
-            with open(feedback_path, 'r', encoding='utf-8') as f:
-                feedback_list = json.load(f)
-            return len(feedback_list)
-        except (json.JSONDecodeError, IOError):
-            return 0
-    
-    @staticmethod
-    def get_feedback_statistics() -> dict:
-        """
-        Calcola statistiche aggregate sui feedback.
-        """
-        feedback_path = Path(FeedbackService.FEEDBACK_FILE)
-        
-        if not feedback_path.exists():
-            return {"count": 0, "average_ratings": {}, "by_mode": {}}
-        
-        try:
-            with open(feedback_path, 'r', encoding='utf-8') as f:
-                feedback_list = json.load(f)
-        except (json.JSONDecodeError, IOError):
-            return {"count": 0, "average_ratings": {}, "by_mode": {}}
-        
-        if not feedback_list:
-            return {"count": 0, "average_ratings": {}, "by_mode": {}}
-        
-        overall_ratings = [f["ratings"]["overall"] for f in feedback_list if f["ratings"]["overall"] is not None]
-        realism_ratings = [f["ratings"]["realism"] for f in feedback_list if f["ratings"]["realism"] is not None]
-        usefulness_ratings = [f["ratings"]["usefulness"] for f in feedback_list if f["ratings"]["usefulness"] is not None]
-        
-        by_mode = {}
-        for f in feedback_list:
-            mode = f.get("metadata", {}).get("mode", "unknown")
-            by_mode[mode] = by_mode.get(mode, 0) + 1
-        
+        if not metadata:
+            return {}
+            
+        # Garantiamo che vengano salvati solo i campi attesi per la ricerca
         return {
-            "count": len(feedback_list),
-            "average_ratings": {
-                "overall": round(sum(overall_ratings) / len(overall_ratings), 2) if overall_ratings else None,
-                "realism": round(sum(realism_ratings) / len(realism_ratings), 2) if realism_ratings else None,
-                "usefulness": round(sum(usefulness_ratings) / len(usefulness_ratings), 2) if usefulness_ratings else None
-            },
-            "by_mode": by_mode
+            "item_id": metadata.get("item_id"),
+            "item_title": str(metadata.get("item_title", "Unknown")),
+            "mode": str(metadata.get("mode", "Unknown")),
+            "score": metadata.get("score")
         }
+
+    @staticmethod
+    def save_feedback(feedback_data: Dict[str, Any], metadata: Dict[str, Any]) -> bool:
+        """
+        Elabora, valida e salva un nuovo feedback utente.
+        
+        Il metodo gestisce l'intero flusso di persistenza garantendo la thread-safety
+        tramite un meccanismo di Lock, prevenendo la corruzione del file JSON
+        in caso di accessi concorrenti.
+        
+        Args:
+            feedback_data (dict): Dizionario contenente i voti e i commenti.
+            metadata (dict): Informazioni di contesto sulla sessione.
+            
+        Returns:
+            bool: True se il salvataggio ha successo.
+            
+        Raises:
+            ValueError: Se i dati non sono validi o il feedback è vuoto.
+            IOError: Se si verificano errori di scrittura su disco.
+        """
+        
+        # 1. Validazione Formale degli Input
+        # Verifichiamo che i rating siano nel range corretto (1-5)
+        overall = FeedbackService._validate_rating(feedback_data.get("overall_rating"), "Overall")
+        realism = FeedbackService._validate_rating(feedback_data.get("realism_rating"), "Realism")
+        usefulness = FeedbackService._validate_rating(feedback_data.get("usefulness_rating"), "Usefulness")
+        
+        comments = str(feedback_data.get("comments", "")).strip()
+        
+        # 2. Controllo di Rilevanza
+        # Impediamo il salvataggio di feedback completamente vuoti
+        if not any([overall, realism, usefulness, comments]):
+            raise ValueError("Impossibile salvare un feedback vuoto.")
+
+        # 3. Creazione dell'Entity
+        clean_metadata = FeedbackService._validate_metadata(metadata)
+        
+        feedback_entity = Feedback(
+            overall_rating=overall,
+            realism_rating=realism,
+            usefulness_rating=usefulness,
+            comments=comments,
+            metadata=clean_metadata
+        )
+        
+        entry_to_save = feedback_entity.to_dict()
+
+        # 4. Persistenza Thread-Safe (Sezione Critica)
+        with _file_lock:
+            try:
+                current_data: List[Dict] = []
+                
+                # A. Lettura dati esistenti (se il file esiste)
+                if FeedbackService.FEEDBACK_FILE.exists():
+                    with open(FeedbackService.FEEDBACK_FILE, 'r', encoding='utf-8') as f:
+                        try:
+                            file_content = json.load(f)
+                            if isinstance(file_content, list):
+                                current_data = file_content
+                        except json.JSONDecodeError:
+                            # Se il file è corrotto, lo sovrascriviamo reinizializzando la lista
+                            current_data = []
+                
+                # B. Append del nuovo dato
+                current_data.append(entry_to_save)
+                
+                # C. Scrittura atomica (si spera) sul file
+                with open(FeedbackService.FEEDBACK_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(current_data, f, ensure_ascii=False, indent=2)
+                    
+                return True
+                
+            except Exception as e:
+                # Log dell'errore (in produzione andrebbe su un file di log vero)
+                print(f"[ERROR] Feedback persistence failed: {e}")
+                raise IOError(f"Errore critico nel salvataggio del feedback: {str(e)}")
+
+    @staticmethod
+    def get_feedback_statistics() -> Dict[str, Any]:
+        """
+        Calcola statistiche aggregate sui feedback raccolti.
+        
+        Utile per fornire un riscontro immediato all'utente ("Media voti: 4.5").
+        Legge il file JSON e calcola le medie aritmetiche dei rating.
+        
+        Returns:
+            Dict: Dizionario contenente conteggi e medie.
+                  Es: {'count': 10, 'avg_overall': 4.2}
+        """
+        stats = {
+            "count": 0,
+            "avg_overall": 0.0,
+            "avg_realism": 0.0
+        }
+        
+        if not FeedbackService.FEEDBACK_FILE.exists():
+            return stats
+
+        try:
+            with open(FeedbackService.FEEDBACK_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                
+            if not data or not isinstance(data, list):
+                return stats
+            
+            total_count = len(data)
+            
+            # Estrazione liste di voti (filtrando i None)
+            overalls = [d['ratings']['overall'] for d in data if d['ratings'].get('overall')]
+            realisms = [d['ratings']['realism'] for d in data if d['ratings'].get('realism')]
+            
+            # Calcolo Medie
+            avg_overall = sum(overalls) / len(overalls) if overalls else 0
+            avg_realism = sum(realisms) / len(realisms) if realisms else 0
+            
+            return {
+                "count": total_count,
+                "avg_overall": round(avg_overall, 1),
+                "avg_realism": round(avg_realism, 1)
+            }
+            
+        except Exception as e:
+            print(f"[WARNING] Errore nel calcolo statistiche: {e}")
+            return stats

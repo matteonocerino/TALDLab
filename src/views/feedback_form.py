@@ -1,22 +1,19 @@
 """
-Feedback Form View - Form feedback qualitativo opzionale
+Feedback Form View - Form feedback qualitativo avanzato
 
-Questo modulo implementa l'interfaccia per la raccolta di feedback
-anonimizzato sulla qualità della simulazione.
+Questo modulo implementa l'interfaccia per la raccolta dati di validazione.
+Gestisce l'allineamento avanzato (Flexbox) nella sidebar per i testi lunghi
+e corregge il posizionamento dei messaggi di errore nel footer.
 
 Boundary del pattern Entity-Control-Boundary (vedi RAD sezione 2.6.1)
 Implementa RF_10 del RAD
 """
 
 import streamlit as st
-from typing import Optional
-
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent.parent))
-
+import streamlit.components.v1 as components
+import os
+import base64
 from src.services.feedback_service import FeedbackService
-
 
 def render_feedback_form(
     item_id: int,
@@ -25,379 +22,293 @@ def render_feedback_form(
     score: int
 ) -> bool:
     """
-    Renderizza il form di feedback opzionale.
-    
-    Implementa RF_10: raccolta e persistenza feedback anonimizzato.
-    
-    Args:
-        item_id (int): ID item simulato (per metadata)
-        item_title (str): Titolo item (per metadata)
-        mode (str): "guided" o "exploratory"
-        score (int): Punteggio ottenuto (per metadata)
-        
-    Returns:
-        bool: True se feedback inviato o saltato (procedi), False altrimenti
-        
-    Example:
-        >>> completed = render_feedback_form(
-        ...     item_id=5,
-        ...     item_title="Crosstalk",
-        ...     mode="guided",
-        ...     score=100
-        ... )
-        >>> if completed:
-        ...     # Torna a mode selection o fine
+    Renderizza la dashboard di feedback post-simulazione.
+    Returns: bool (True se concluso).
     """
     
-    # CSS minimo per stelle
-    st.markdown(_get_feedback_css(), unsafe_allow_html=True)
-    
-    # Header con logo
+    # --- GESTIONE STATO ---
+    if "fb_submission_status" not in st.session_state:
+        st.session_state.fb_submission_status = "pending"
+
+    # 1. Ancora scroll
+    st.markdown('<div id="feedback-top-marker" style="position: absolute; top: -100px;"></div>', unsafe_allow_html=True)
+    components.html("""
+        <script>
+            window.parent.document.getElementById("feedback-top-marker").scrollIntoView({behavior: "auto", block: "start"});
+        </script>
+    """, height=0)
+
+    # 2. Header
     _render_header()
     
+    # 3. Sidebar (Layout avanzato HTML)
+    _render_sidebar(item_id, item_title, mode, score)
+    
     # Breadcrumb
-    st.markdown("**Report** › **Feedback (opzionale)**")
+    mode_label = "🎯 Modalità Guidata" if mode == "guided" else "🔍 Modalità Esplorativa"
+    st.markdown(f'<p class="breadcrumb">{mode_label} › Intervista › Valutazione › Report › <strong>Feedback</strong></p>', unsafe_allow_html=True)
     st.markdown("---")
     
-    # Intro
-    _render_intro()
+    is_disabled = st.session_state.fb_submission_status != "pending"
     
-    # Form feedback
-    with st.form(key="feedback_form", clear_on_submit=False):
+    # 4. Area Feedback
+    st.markdown("### 📊 Valutazione Sperimentale")
+    if is_disabled:
+        st.caption("🔒 Sessione chiusa. Grazie per il tuo contributo.")
+    else:
+        st.caption("Valuta i parametri chiave per la validazione del modello.")
+    st.markdown("")
+
+    # LAYOUT CARD
+    c1, c2, c3 = st.columns(3, gap="medium")
+    
+    with c1:
+        with st.container(border=True):
+            st.markdown("#### 🗣️ Realismo")
+            st.caption("Coerenza clinica delle risposte")
+            realism = st.feedback("faces", key="fb_realism_input", disabled=is_disabled)
+            if realism is not None:
+                labels = ["Molto Artificiale", "Poco Realistico", "Neutro", "Realistico", "Molto Naturale"]
+                st.markdown(f"<div style='text-align: center; color: #6c5ce7; font-size: 1.1rem; font-weight: 600; margin-top: 5px;'>{labels[realism]}</div>", unsafe_allow_html=True)
+            else:
+                st.markdown("<div style='height: 32px;'></div>", unsafe_allow_html=True)
+
+    with c2:
+        with st.container(border=True):
+            st.markdown("#### 🎓 Efficacia")
+            st.caption("Utilità per l'apprendimento")
+            usefulness = st.feedback("stars", key="fb_usefulness_input", disabled=is_disabled)
+            if usefulness is not None:
+                st.markdown(f"<div style='text-align: center; color: #e67e22; font-size: 1.1rem; font-weight: 600; margin-top: 5px;'>{usefulness + 1} / 5</div>", unsafe_allow_html=True)
+            else:
+                st.markdown("<div style='height: 32px;'></div>", unsafe_allow_html=True)
+
+    with c3:
+        with st.container(border=True):
+            st.markdown("#### ⭐ Generale")
+            st.caption("Esperienza d'uso complessiva")
+            overall = st.feedback("stars", key="fb_overall_input", disabled=is_disabled)
+            if overall is not None:
+                st.markdown(f"<div style='text-align: center; color: #27ae60; font-size: 1.1rem; font-weight: 600; margin-top: 5px;'>{overall + 1} / 5</div>", unsafe_allow_html=True)
+            else:
+                st.markdown("<div style='height: 32px;'></div>", unsafe_allow_html=True)
+
+    st.markdown("") 
+
+    st.markdown("#### 📝 Note Qualitative (Opzionale)")
+    comments = st.text_area(
+        "Segnala incongruenze o suggerimenti:",
+        placeholder="Es: Il comportamento verbale era coerente, ma...",
+        height=100,
+        label_visibility="collapsed",
+        key="fb_comments_input",
+        disabled=is_disabled
+    )
+
+    st.markdown("---")
+    
+    # === FOOTER DINAMICO ===
+    
+    # FASE 1: PENDING
+    if st.session_state.fb_submission_status == "pending":
         
-        st.markdown("### 📊 Valutazioni (opzionali)")
-        st.caption("Lascia vuoto se preferisci non rispondere")
+        col_privacy, col_actions = st.columns([1, 1])
         
-        # Rating 1: Overall
-        st.markdown("**Valutazione generale dell'esperienza**")
-        overall_rating = st.select_slider(
-            "Quanto ti è piaciuta l'esperienza complessiva?",
-            options=[1, 2, 3, 4, 5],
-            value=3,
-            format_func=lambda x: "⭐" * x,
-            label_visibility="collapsed",
-            key="overall"
-        )
-        
+        with col_privacy:
+            st.markdown("<div style='padding-top: 10px;'>", unsafe_allow_html=True)
+            st.caption("🔒 **Dato Anonimo:** Il feedback viene salvato per fini statistici senza riferimenti all'utente.")
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+        with col_actions:
+            # Placeholder per errori a larghezza intera (sopra i bottoni)
+            error_container = st.empty()
+            
+            b_skip, b_send = st.columns(2)
+            with b_skip:
+                st.button(
+                    "⏭️ Salta", 
+                    use_container_width=True, 
+                    on_click=_skip_feedback_callback
+                )
+
+            with b_send:
+                if st.button("✅ Invia", use_container_width=True, type="primary"):
+                    # Logica di validazione inline per controllare dove mostrare l'errore
+                    val_overall = (overall + 1) if overall is not None else None
+                    val_realism = (realism + 1) if realism is not None else None
+                    val_usefulness = (usefulness + 1) if usefulness is not None else None
+                    
+                    if not any([val_overall, val_realism, val_usefulness, comments]):
+                        # MOSTRA ERRORE NEL CONTAINER LARGO
+                        error_container.warning("⚠️ Compila almeno una valutazione o inserisci un commento.")
+                    else:
+                        # Procedi al salvataggio
+                        success = _process_submission(overall, realism, usefulness, comments, item_id, item_title, mode, score)
+                        if success:
+                            st.session_state.fb_submission_status = "submitted"
+                            # Flag per mostrare i palloncini SOLO ora
+                            st.session_state.fb_just_submitted = True
+                            st.rerun()
+
+    # FASE 2: BLOCCATO (Già Inviato o Saltato)
+    else:
         st.markdown("")
-        
-        # Rating 2: Realism
-        st.markdown("**Realismo della simulazione**")
-        realism_rating = st.select_slider(
-            "Quanto realistico era il paziente virtuale?",
-            options=[1, 2, 3, 4, 5],
-            value=3,
-            format_func=lambda x: "⭐" * x,
-            label_visibility="collapsed",
-            key="realism"
-        )
-        
-        st.markdown("")
-        
-        # Rating 3: Usefulness
-        st.markdown("**Utilità didattica percepita**")
-        usefulness_rating = st.select_slider(
-            "Quanto utile è stato per il tuo apprendimento?",
-            options=[1, 2, 3, 4, 5],
-            value=3,
-            format_func=lambda x: "⭐" * x,
-            label_visibility="collapsed",
-            key="usefulness"
-        )
-        
-        st.markdown("---")
-        
-        # Commenti liberi
-        st.markdown("### 💬 Commenti e Suggerimenti (opzionali)")
-        comments = st.text_area(
-            "Condividi le tue osservazioni:",
-            height=120,
-            placeholder="Es: Il paziente era molto realistico, soprattutto nelle intrusioni. "
-                       "Forse potrebbe essere utile avere più item da esplorare...",
-            label_visibility="collapsed",
-            key="comments"
-        )
-        
-        st.caption("💡 I tuoi commenti ci aiutano a migliorare TALDLab")
-        
-        st.markdown("---")
-        
-        # Pulsanti
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            skip_button = st.form_submit_button(
-                "⏭️ Salta Feedback",
-                use_container_width=True
-            )
-        
-        with col2:
-            submit_button = st.form_submit_button(
-                "✅ Invia Feedback",
-                use_container_width=True,
-                type="primary"
-            )
-    
-    # Gestione skip
-    if skip_button:
-        st.info("👍 Va bene, nessun problema! Grazie per aver usato TALDLab.")
-        return True
-    
-    # Gestione submit
-    if submit_button:
-        return _handle_feedback_submit(
-            overall_rating=overall_rating,
-            realism_rating=realism_rating,
-            usefulness_rating=usefulness_rating,
-            comments=comments,
-            item_id=item_id,
-            item_title=item_title,
-            mode=mode,
-            score=score
-        )
-    
+        _, center_col, _ = st.columns([1, 2, 1])
+            
+        with center_col:
+            # Caso A: Inviato
+            if st.session_state.fb_submission_status == "submitted":
+
+                # Palloncini SOLO la prima volta
+                if st.session_state.get("fb_just_submitted"):
+                    st.balloons()
+                    del st.session_state["fb_just_submitted"] # Reset flag
+                
+                with st.container(border=True):
+                    # Messaggio di stato finale
+                    st.success("✅ **Feedback registrato.** Grazie per il contributo.")
+                    st.caption("Non è possibile inviare nuovi dati per questa sessione.")
+                    
+                    st.markdown("")
+                        
+                    # Bottoni Navigazione
+                    b_report, b_new = st.columns(2)
+                    with b_report:
+                        if st.button("⬅️ Rivedi Report", use_container_width=True):
+                            return "back_to_report"
+                    with b_new:
+                        if st.button("🔄 Nuova Simulazione", type="primary", use_container_width=True):
+                            del st.session_state.fb_submission_status
+                            return True
+
+            # Caso B: Saltato
+            elif st.session_state.fb_submission_status == "skipped":
+                with st.container(border=True):
+                    st.info("ℹ️ **Feedback saltato.** La sessione è conclusa.")
+                    st.caption("Hai scelto di non inviare dati per questa sessione.")
+
+                    st.markdown("")   
+                        
+                    b_report, b_new = st.columns(2)
+                    with b_report:
+                        if st.button("⬅️ Rivedi Report", use_container_width=True):
+                            del st.session_state.fb_submission_status
+                            return "back_to_report"
+                    with b_new:
+                        if st.button("🔄 Nuova Simulazione", type="primary", use_container_width=True):
+                            del st.session_state.fb_submission_status
+                            return True
     return False
 
 
-def _get_feedback_css() -> str:
-    """CSS minimo per feedback form."""
-    return """
-    <style>
-    .info-banner {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 1.5rem;
-        border-radius: 10px;
-        margin: 1rem 0;
-        text-align: center;
-    }
-    
-    .info-banner h3 {
-        margin: 0 0 0.5rem 0;
-        font-size: 1.3rem;
-    }
-    
-    .info-banner p {
-        margin: 0;
-        font-size: 0.95rem;
-        opacity: 0.95;
-    }
-    </style>
+def _skip_feedback_callback():
     """
+    Callback per il tasto Salta.
+    Pulisce i widget PRIMA del rerun.
+    """
+    st.session_state.fb_submission_status = "skipped"
+    
+    keys_to_reset = ["fb_realism_input", "fb_usefulness_input", "fb_overall_input"]
+    for key in keys_to_reset:
+        if key in st.session_state:
+            st.session_state[key] = None
+    
+    if "fb_comments_input" in st.session_state:
+        st.session_state["fb_comments_input"] = ""
+
+
+def _render_sidebar(item_id, item_title, mode, score):
+    """
+    Popola la sidebar con i dettagli della sessione corrente.
+    Usa i box nativi di Streamlit (st.info/st.warning).
+    """
+    with st.sidebar:
+        # 1. Dettagli Sessione
+        st.markdown("## 📋 Oggetto Valutazione")
+        
+        content = f"**Item:** {item_id}. {item_title}"
+        
+        if mode == "guided":
+            # Modalità Guidata -> BLU
+            st.info(f"**Modalità Guidata**\n\n{content}", icon="🎯")
+        else:
+            # Modalità Esplorativa -> GIALLO
+            st.warning(f"**Modalità Esplorativa**\n\n{content}", icon="🔍") 
+        
+        # 2. ESITO
+        if score >= 60:
+            st.success(f"**Esito:** Superato ({score}/100)", icon="✅")
+        elif score >= 40:
+            st.warning(f"**Esito:** Migliorabile ({score}/100)", icon="⚠️")
+        else:
+            st.error(f"**Esito:** Non Superato ({score}/100)", icon="❌")
+            
+        st.markdown("---")
+
+        # 3. Info Ricerca
+        st.markdown("## ℹ️ Info Ricerca")
+        st.caption("I dati raccolti servono a validare l'accuratezza clinica del modello LLM nel simulare i disturbi TALD.")
+        
+        st.markdown("---")
+        st.markdown("## 🔒 Privacy & Dati")
+        st.caption("""
+        - **Anonimato:** No IP/Email.
+        - **Storage:** Locale (JSON).
+        """)
+        
+        st.markdown("---")
+        st.caption("Progetto TALDLab 2024")
+
+
+def _process_submission(overall, realism, usefulness, comments, item_id, item_title, mode, score):
+    """Prepara i dati e chiama il service (la validazione UI è fatta prima)."""
+    
+    # Mapping
+    val_overall = (overall + 1) if overall is not None else None
+    val_realism = (realism + 1) if realism is not None else None
+    val_usefulness = (usefulness + 1) if usefulness is not None else None
+
+    if not any([val_overall, val_realism, val_usefulness, comments]):
+        return False
+    
+    fb_data = {
+        "overall_rating": val_overall,
+        "realism_rating": val_realism,
+        "usefulness_rating": val_usefulness,
+        "comments": comments
+    }
+    
+    metadata = {
+        "item_id": item_id,
+        "item_title": item_title,
+        "mode": mode,
+        "score": score
+    }
+
+    try:
+        FeedbackService.save_feedback(fb_data, metadata)
+        return True
+    except Exception as e:
+        st.error(f"❌ **Errore tecnico nel salvataggio**: {e}")
+        return False
 
 
 def _render_header():
-    """Renderizza header con logo."""
-    header_col1, header_col2 = st.columns([1, 11])
-    
-    with header_col1:
-        try:
-            st.image("assets/taldlab_logo.png", width=60)
-        except:
-            st.markdown("<div style='font-size: 3rem;'>🧠</div>", unsafe_allow_html=True)
-    
-    with header_col2:
-        st.markdown("""
-        <div style="margin-top: 5px;">
-            <h2 style="margin: 0; color: #2c3e50;">💬 Feedback sulla Simulazione</h2>
-            <p style="color: #7f8c8d; margin: 0; font-size: 0.9rem;">
-                Aiutaci a migliorare TALDLab (completamente opzionale e anonimo)
-            </p>
+    """Renderizza l'header standard."""
+    logo_path = os.path.join("assets", "taldlab_logo.png")
+    if os.path.exists(logo_path):
+        with open(logo_path, "rb") as f:
+            b64_logo = base64.b64encode(f.read()).decode("utf-8")
+        logo_element_html = f'<img src="data:image/png;base64,{b64_logo}" alt="TALDLab logo" />'
+    else:
+        logo_element_html = '<div class="emoji-fallback">🧠</div>'
+
+    st.markdown(f"""
+    <div class="brand">
+        {logo_element_html}
+        <div class="brand-text-container">
+            <div class="brand-title">Validazione Prototipo</div>
+            <div class="brand-sub">Raccolta dati per progetto di ricerca sperimentale</div>
         </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("")
-
-
-def _render_intro():
-    """Renderizza intro esplicativa."""
-    st.markdown("""
-    <div class="info-banner">
-        <h3>🙏 Il tuo parere è importante</h3>
-        <p>Questo feedback è completamente <strong>anonimo</strong> e ci aiuta a validare 
-        il prototipo e migliorare l'esperienza formativa. Tutti i campi sono opzionali.</p>
     </div>
     """, unsafe_allow_html=True)
-    
-    st.markdown("")
-
-
-def _handle_feedback_submit(
-    overall_rating: int,
-    realism_rating: int,
-    usefulness_rating: int,
-    comments: str,
-    item_id: int,
-    item_title: str,
-    mode: str,
-    score: int
-) -> bool:
-    """
-    Gestisce submit del feedback.
-    
-    Usa FeedbackService per validare e salvare in feedback_log.json.
-    """
-    # Verifica che almeno un campo sia compilato
-    has_ratings = (overall_rating is not None or 
-                   realism_rating is not None or 
-                   usefulness_rating is not None)
-    has_comments = comments and comments.strip()
-    
-    if not has_ratings and not has_comments:
-        st.warning("""
-        ⚠️ **Nessun feedback fornito**
-        
-        Compila almeno una valutazione o aggiungi un commento, 
-        oppure clicca "Salta Feedback" per continuare.
-        """)
-        return False
-    
-    try:
-        # Prepara dati feedback
-        feedback_data = {
-            "overall_rating": overall_rating,
-            "realism_rating": realism_rating,
-            "usefulness_rating": usefulness_rating,
-            "comments": comments.strip() if comments else ""
-        }
-        
-        # Prepara metadata anonimizzati
-        metadata = {
-            "item_id": item_id,
-            "item_title": item_title,
-            "mode": mode,
-            "score": score
-        }
-        
-        # Salva feedback
-        FeedbackService.save_feedback(feedback_data, metadata)
-        
-        # Successo
-        st.success("""
-        ✅ **Grazie per il tuo feedback!**
-        
-        Il tuo contributo è stato salvato e ci aiuterà a migliorare TALDLab.
-        """)
-        
-        # Mostra statistiche aggregate (se disponibili)
-        _show_aggregate_stats()
-        
-        return True
-    
-    except Exception as e:
-        st.error(f"""
-        ❌ **Errore nel salvataggio del feedback**
-        
-        {str(e)}
-        
-        Puoi comunque continuare cliccando "Salta Feedback".
-        """)
-        return False
-
-
-def _show_aggregate_stats():
-    """Mostra statistiche aggregate feedback (opzionale)."""
-    try:
-        stats = FeedbackService.get_feedback_statistics()
-        
-        if stats['count'] > 0:
-            st.markdown("---")
-            st.markdown("### 📊 Statistiche Aggregate")
-            st.caption(f"Basate su {stats['count']} feedback raccolti finora")
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                if stats['average_ratings']['overall']:
-                    st.metric(
-                        "Overall medio",
-                        f"{stats['average_ratings']['overall']:.1f}/5",
-                        help="Valutazione generale media"
-                    )
-            
-            with col2:
-                if stats['average_ratings']['realism']:
-                    st.metric(
-                        "Realismo medio",
-                        f"{stats['average_ratings']['realism']:.1f}/5",
-                        help="Realismo simulazione medio"
-                    )
-            
-            with col3:
-                if stats['average_ratings']['usefulness']:
-                    st.metric(
-                        "Utilità media",
-                        f"{stats['average_ratings']['usefulness']:.1f}/5",
-                        help="Utilità didattica media"
-                    )
-    
-    except Exception:
-        # Se fallisce, non mostrare nulla (non è critico)
-        pass
-
-
-def render_feedback_sidebar():
-    """Renderizza sidebar con info feedback."""
-    with st.sidebar:
-        st.markdown("## 💬 Info Feedback")
-        
-        st.info("""
-        **Cosa raccogliamo:**
-        - Valutazioni 1-5 (opzionali)
-        - Commenti liberi (opzionali)
-        - Metadati anonimi (item, modalità, score)
-        
-        **Cosa NON raccogliamo:**
-        - Nome o email
-        - Dati identificativi
-        - Storico conversazioni
-        """)
-        
-        st.markdown("---")
-        
-        st.markdown("## 🔒 Privacy")
-        
-        st.success("""
-        ✅ **100% Anonimo**
-        
-        Nessun dato personale viene salvato.
-        Il feedback è utilizzato solo per validare il prototipo.
-        """)
-        
-        st.markdown("---")
-        
-        st.markdown("## ℹ️ Perché è importante?")
-        
-        st.markdown("""
-        I tuoi feedback ci aiutano a:
-        - Validare il prototipo
-        - Migliorare il realismo
-        - Identificare bug
-        - Pubblicare ricerca scientifica
-        """)
-
-
-def show_feedback_skip_confirmation() -> bool:
-    """
-    Mostra dialog conferma per saltare feedback.
-    
-    Returns:
-        bool: True se utente conferma di saltare
-    """
-    st.warning("""
-    ⚠️ **Vuoi davvero saltare il feedback?**
-    
-    Ci vogliono solo 30 secondi e ci aiuteresti molto!
-    """)
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button("← Compila Feedback", use_container_width=True):
-            return False
-    
-    with col2:
-        if st.button("Salta →", use_container_width=True, type="secondary"):
-            return True
-    
-    return False
