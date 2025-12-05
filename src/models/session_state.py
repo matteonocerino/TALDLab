@@ -9,7 +9,7 @@ Entity del pattern Entity-Control-Boundary (vedi RAD sezione 2.6.1)
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Dict
 from datetime import datetime
 from enum import Enum
 import uuid
@@ -23,7 +23,7 @@ class SessionPhase(Enum):
     Enumerazione delle fasi possibili della sessione.
     
     Rappresenta il workflow dell'applicazione:
-    SELECTION → ITEM_SELECTION → INTERVIEW → EVALUATION → REPORT
+    SELECTION -> ITEM_SELECTION -> INTERVIEW -> EVALUATION -> REPORT
     """
     SELECTION = "selection"              # Selezione modalità (guidata/esplorativa)
     ITEM_SELECTION = "item_selection"    # Selezione item (solo modalità guidata)
@@ -38,144 +38,129 @@ class SessionState:
     Rappresenta lo stato globale della sessione corrente.
     
     Mantiene tutte le informazioni necessarie per coordinare il flusso
-    dell'applicazione attraverso le diverse fasi (selezione, intervista,
-    valutazione, report).
+    dell'applicazione attraverso le diverse fasi.
     
     Attributes:
         phase (SessionPhase): Fase corrente della sessione
         mode (Optional[str]): Modalità selezionata ("guided" o "exploratory")
-        current_item_id (Optional[int]): ID dell'item TALD corrente
-        ground_truth (Optional[GroundTruth]): Ground truth della simulazione
-        conversation (ConversationHistory): Storico conversazionale
-        user_evaluation (Optional[UserEvaluation]): Valutazione utente
-        evaluation_result (Optional[EvaluationResult]): Risultato confronto
-        session_id (str): Identificativo univoco della sessione
-        created_at (datetime): Timestamp creazione sessione
+        ground_truth (Optional[GroundTruth]): Configurazione clinica reale della simulazione
+        conversation (ConversationHistory): Storico conversazionale completo
+        user_evaluation (Optional[UserEvaluation]): Valutazione fornita dall'utente
+        evaluation_result (Optional[EvaluationResult]): Risultato del confronto automatico
+        session_id (str): Identificativo univoco della sessione (per log/debug)
+        created_at (datetime): Timestamp di avvio della sessione
     
     Example:
         >>> session = SessionState()
         >>> print(session.phase)
         SessionPhase.SELECTION
-        >>> session.start_guided_mode(item_id=5)
-        >>> print(session.is_in_interview())
-        False  # Deve passare da ITEM_SELECTION prima
     """
     
     phase: SessionPhase = SessionPhase.SELECTION
     mode: Optional[str] = None
-    current_item_id: Optional[int] = None
+    
+    # Gestisce la complessità del quadro clinico (multi-item)
     ground_truth: Optional[GroundTruth] = None
+    
     conversation: ConversationHistory = field(default_factory=ConversationHistory)
     user_evaluation: Optional[UserEvaluation] = None
     evaluation_result: Optional[EvaluationResult] = None
+    
     session_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     created_at: datetime = field(default_factory=datetime.now)
     
-    # ======== Stato e modalità ========
+    # ======== Helper di Stato e Modalità ========
 
     def is_guided_mode(self) -> bool:
-        """
-        Verifica se la sessione è in modalità guidata.
-        
-        Returns:
-            bool: True se mode = "guided"
-        """
+        """Verifica se la sessione è in modalità guidata."""
         return self.mode == "guided"
     
     def is_exploratory_mode(self) -> bool:
-        """
-        Verifica se la sessione è in modalità esplorativa.
-        
-        Returns:
-            bool: True se mode = "exploratory"
-        """
+        """Verifica se la sessione è in modalità esplorativa."""
         return self.mode == "exploratory"
     
     def is_in_selection(self) -> bool:
         """Verifica se si è nella fase di selezione modalità."""
-        return self.phase == SessionPhase.SELECTION
+        return self.phase.value == SessionPhase.SELECTION.value
     
     def is_in_item_selection(self) -> bool:
         """Verifica se si è nella fase di selezione item (solo modalità guidata)."""
-        return self.phase == SessionPhase.ITEM_SELECTION
+        return self.phase.value == SessionPhase.ITEM_SELECTION.value
     
     def is_in_interview(self) -> bool:
         """Verifica se si è nella fase di intervista."""
-        return self.phase == SessionPhase.INTERVIEW
+        return self.phase.value == SessionPhase.INTERVIEW.value
     
     def is_in_evaluation(self) -> bool:
         """Verifica se si è nella fase di valutazione."""
-        return self.phase == SessionPhase.EVALUATION
+        return self.phase.value == SessionPhase.EVALUATION.value
     
     def is_in_report(self) -> bool:
         """Verifica se si è nella fase di visualizzazione report."""
-        return self.phase == SessionPhase.REPORT
+        return self.phase.value == SessionPhase.REPORT.value
 
-    # ======== Transizioni di stato ========
+    # ======== Transizioni di Stato (Core Logic) ========
 
     def start_guided_mode(self):
         """
         Inizia la modalità guidata.
-        
         Imposta la modalità su "guided" e passa alla fase di selezione item.
         """
         self.mode = "guided"
         self.phase = SessionPhase.ITEM_SELECTION
     
-    def start_exploratory_mode(self, item_id: int, item_title: str, grade: int):
+    def start_exploratory_mode(self, active_items: Dict[int, int]):
         """
-        Inizia la modalità esplorativa con item casuale.
+        Inizia la modalità esplorativa con una configurazione complessa (comorbilità).
         
         Args:
-            item_id (int): ID dell'item selezionato casualmente
-            item_title (str): Titolo dell'item
-            grade (int): Grado impostato per la simulazione
+            active_items (Dict[int, int]): Dizionario dei disturbi attivi {item_id: grado}.
+                                           Esempio: {5: 3, 12: 2} indica Crosstalk grado 3
+                                           e Paraphasia grado 2.
         """
         self.mode = "exploratory"
-        self.current_item_id = item_id
         
-        # Crea ground truth
+        # Crea il Ground Truth utilizzando la nuova struttura multi-item.
+        # In questa fase non servono i titoli testuali per la logica interna.
         self.ground_truth = GroundTruth(
-            item_id=item_id,
-            item_title=item_title,
-            grade=grade,
+            active_items=active_items,
             mode="exploratory"
         )
         
-        # Passa direttamente all'intervista
+        # In modalità esplorativa, saltiamo la selezione item e andiamo diretti all'intervista
         self.phase = SessionPhase.INTERVIEW
     
-    def set_selected_item(self, item_id: int, item_title: str, grade: int):
+    def set_selected_item(self, item_id: int, grade: int):
         """
-        Imposta l'item selezionato in modalità guidata.
+        Imposta l'item selezionato in modalità guidata e avvia l'intervista.
+        
+        In questa modalità, il paziente ha UN SOLO disturbo (quello scelto).
+        Lo adattiamo alla struttura dati creando un dizionario con una sola voce.
         
         Args:
-            item_id (int): ID dell'item selezionato
-            item_title (str): Titolo dell'item
-            grade (int): Grado impostato per la simulazione
+            item_id (int): ID dell'item scelto dall'utente.
+            grade (int): Grado di severità simulato (generato casualmente 0-4).
         """
         if not self.is_guided_mode():
             raise ValueError("Metodo disponibile solo in modalità guidata")
         
-        self.current_item_id = item_id
+        # Creazione configurazione "Singolo Disturbo" 
+        active_items = {item_id: grade}
         
-        # Crea ground truth
         self.ground_truth = GroundTruth(
-            item_id=item_id,
-            item_title=item_title,
-            grade=grade,
+            active_items=active_items,
             mode="guided"
         )
         
-        # Passa all'intervista
         self.phase = SessionPhase.INTERVIEW
     
     def terminate_interview(self):
         """
         Termina l'intervista e passa alla fase di valutazione.
+        Verifica che la fase corrente sia corretta prima di procedere.
         """
         if not self.is_in_interview():
-            raise ValueError("Non si può terminare l'intervista se non si è in fase di intervista")
+            raise ValueError("Impossibile terminare l'intervista se non si è in fase di intervista")
         
         self.phase = SessionPhase.EVALUATION
     
@@ -184,17 +169,17 @@ class SessionState:
         Sottomette la valutazione e passa alla visualizzazione report.
         
         Args:
-            user_eval (UserEvaluation): Valutazione fornita dall'utente
-            result (EvaluationResult): Risultato del confronto
+            user_eval (UserEvaluation): Valutazione fornita dall'utente (scheda completa).
+            result (EvaluationResult): Risultato del confronto calcolato dal motore.
         """
         if not self.is_in_evaluation():
-            raise ValueError("Non si può sottomettere valutazione se non si è in fase di valutazione")
+            raise ValueError("Impossibile sottomettere valutazione se non si è in fase di valutazione")
         
         self.user_evaluation = user_eval
         self.evaluation_result = result
         self.phase = SessionPhase.REPORT
 
-    # ======== Metriche e riepilogo ========
+    # ======== Metriche e Riepilogo Sessione ========
 
     def get_session_duration_minutes(self) -> float:
         """
@@ -208,10 +193,11 @@ class SessionState:
     
     def get_conversation_summary(self) -> dict:
         """
-        Restituisce un riepilogo della conversazione.
+        Restituisce un riepilogo statistico della conversazione.
+        Utile per sidebar e reportistica.
         
         Returns:
-            dict: Statistiche conversazione
+            dict: Statistiche (messaggi totali, utente, assistente, durata, parole).
         """
         return {
             "message_count": self.conversation.get_message_count(),
@@ -221,18 +207,18 @@ class SessionState:
             "total_words": self.conversation.get_total_words()
         }
 
-    # ======== Gestione stato ========
+    # ======== Gestione Ciclo di Vita (Reset) ========
 
     def reset(self):
         """
-        Resetta la sessione per iniziare una nuova simulazione.
+        Effettua un reset completo della sessione per iniziare una nuova simulazione.
         
-        Mantiene solo il session_id per tracciabilità, resetta tutto il resto.
-        Utilizzato quando l'utente clicca "Avvia nuova simulazione".
+        Mantiene solo il session_id (rigenerato se necessario per tracciabilità esterna)
+        ma pulisce tutti i dati clinici, lo storico e i risultati.
+        Utilizzato quando l'utente clicca "Avvia nuova simulazione" nel report.
         """
         self.phase = SessionPhase.SELECTION
         self.mode = None
-        self.current_item_id = None
         self.ground_truth = None
         self.conversation.clear()
         self.user_evaluation = None
@@ -241,16 +227,15 @@ class SessionState:
     
     def to_dict(self) -> dict:
         """
-        Converte lo stato della sessione in dizionario.
+        Converte lo stato della sessione in dizionario per debug/logging.
         
         Returns:
-            dict: Rappresentazione completa dello stato
+            dict: Rappresentazione completa dello stato interno.
         """
         return {
             "session_id": self.session_id,
             "phase": self.phase.value,
             "mode": self.mode,
-            "current_item_id": self.current_item_id,
             "session_duration_minutes": self.get_session_duration_minutes(),
             "conversation_summary": self.get_conversation_summary(),
             "has_ground_truth": self.ground_truth is not None,
@@ -259,25 +244,26 @@ class SessionState:
             "created_at": self.created_at.isoformat()
         }
 
-    # ======== Persistenza con Streamlit ========
+    # ======== Integrazione Persistenza Streamlit ========
 
     @staticmethod
     def ensure_in_streamlit(st_session_state):
         """
-        Inizializza SessionState all’interno di st.session_state se assente.
+        Inizializza l'oggetto SessionState all'interno dello stato globale di Streamlit
+        se non è già presente. Garantisce che la sessione sopravviva ai re-run.
         
         Args:
-            st_session_state (st.session_state): Stato globale Streamlit
+            st_session_state (st.session_state): Oggetto di stato globale di Streamlit.
         
         Returns:
-            SessionState: Oggetto di sessione persistente
+            SessionState: L'oggetto di sessione (nuovo o esistente).
         """
         if "tald_session" not in st_session_state:
             st_session_state["tald_session"] = SessionState()
         return st_session_state["tald_session"]
 
     def __str__(self) -> str:
-        """Rappresentazione leggibile dello stato."""
+        """Rappresentazione leggibile dello stato per debug."""
         return (
             f"SessionState(id={self.session_id}, phase={self.phase.value}, "
             f"mode={self.mode}, messages={self.conversation.get_message_count()})"

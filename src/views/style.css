@@ -277,6 +277,11 @@ button[key="confirm_back_eval"]:hover {
     margin-top: 2rem !important;
 }
 
+.stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
+    font-size: 1.1rem !important;
+    font-weight: 600 !important;
+}
+
 
 /* 9. CHAT BUBBLES + ANIMAZIONE OTTIMIZZATA */
 .chat-bubble-user, .chat-bubble-assistant {
@@ -398,4 +403,33 @@ button[key="confirm_back_eval"]:hover {
     padding-left: 1rem;
     line-height: 1.6;
     font-size: 0.9rem;
+}
+
+
+/* 12. CARD DEL REPORT ESPLORATIVO */
+
+/* Titolo dell'Item (es. "Derailment") */
+.report-card-title {
+    font-size: 1.2rem !important;
+    font-weight: 700 !important;
+    color: #2c3e50 !important;
+    line-height: 1.3 !important;
+    margin-bottom: 5px !important;
+}
+
+/* Etichette piccole (es. "REALE", "TUO") */
+.report-card-label {
+    font-size: 0.8rem !important;
+    text-transform: uppercase !important;
+    color: #7f8c8d !important;
+    font-weight: 600 !important;
+    margin-bottom: 0px !important;
+}
+
+/* I Numeri dei gradi (es. "2/4") - MOLTO GRANDI */
+.report-card-value {
+    font-size: 1.8rem !important;
+    font-weight: 800 !important;
+    color: #2c3e50 !important;
+    margin-top: 0px !important;
 }

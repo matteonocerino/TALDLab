@@ -73,11 +73,13 @@ def render_mode_selection() -> str | None:
         <div class="mode-card exploratory">
             <h3 class="card-title">🔍 Modalità Esplorativa</h3>
             <p class="card-sub">Assessment diagnostico realistico</p>
-            <p>Il sistema assegna casualmente un item TALD senza comunicartelo. Simula una vera valutazione clinica.</p>
+            <p>Il sistema genera un caso clinico senza indicarti quali fenomeni TALD siano presenti.<br>
+            Simula una valutazione reale, dove possono emergere zero, uno o più item.
+            </p>
             <ul>
-                <li>Item assegnato casualmente (non visibile)</li>
-                <li>Devi identificare quale disturbo osservi</li>
-                <li>Obiettivo: identificare l'item e il grado (0-4)</li>
+                <li>Presenza di fenomeni TALD variabile (0, 1 o multipli)</li>
+                <li>Devi riconoscere quali manifestazioni osservi</li>
+                <li>Obiettivo: individuare ogni item rilevante e valutarne il grado (0–4)</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
@@ -117,9 +119,9 @@ def render_mode_info_sidebar():
 
         st.markdown('<div class="sidebar-section"><strong>Modalità Esplorativa</strong></div>', unsafe_allow_html=True)
         st.markdown("""
-        1. Avvia simulazione (item casuale)  
+        1. Avvia simulazione  
         2. Conduci l'intervista  
-        3. Identifica item + valuta grado
+        3. Individua gli eventuali item TALD e valuta il grado (0–4)
         """)
 
         st.markdown('<div class="sidebar-section"></div>', unsafe_allow_html=True)

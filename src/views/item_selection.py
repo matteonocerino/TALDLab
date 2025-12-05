@@ -31,8 +31,6 @@ def render_item_selection(tald_items: List[TALDItem]) -> Optional[TALDItem]:
         "reset": Se l'utente ha cliccato per tornare alla selezione modalità.
         None: Se nessuna azione è stata completata.
     """
-    
-    # NOTA: Lo stile di questa pagina è definito nel file globale 'src/views/style.css'.
 
     # Forza scroll in alto all'apertura della pagina
     scroll_to_top("selection-view-top")
@@ -119,7 +117,7 @@ def _render_item_list(items: List[TALDItem], key_prefix: str) -> bool:
             st.markdown('<div class="item-container">', unsafe_allow_html=True)
             col1, col2 = st.columns([4, 1])
             with col1:
-                st.markdown(f"**{item.id}. {item.title}**")
+                st.markdown(f"##### **{item.id}. {item.title}**")
                 short_desc = (item.description[:120] + "...") if len(item.description) > 120 else item.description
                 st.caption(short_desc)
             with col2:
@@ -167,9 +165,6 @@ def _render_item_details(item: TALDItem):
 
 def _show_item_confirmation(item: TALDItem) -> Optional[TALDItem]:
     """Mostra un banner di conferma e i pulsanti per iniziare o annullare."""
-
-    # Forza scroll in alto all'apertura della pagina
-    scroll_to_top("selection-view-top")
 
     st.markdown("## Convalida la tua scelta")
     st.success(f"✅ **Item Selezionato:** {item.id}. {item.title}")

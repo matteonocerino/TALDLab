@@ -34,7 +34,7 @@ def render_evaluation_form(
     
     Args:
         tald_items (List[TALDItem]): Lista completa item TALD
-        current_item (TALDItem): Item simulato (ground truth)
+        current_item (TALDItem): Item simulato (o placeholder in esplorativa)
         conversation (ConversationHistory): Storico conversazione
         mode (str): "guided" o "exploratory"
         
@@ -64,10 +64,18 @@ def render_evaluation_form(
     # Gestione stati di blocco
     if 'eval_submitting' not in st.session_state:
         st.session_state.eval_submitting = False
+
+    # Controlla se il warning "paziente sano" è attivo
+    is_showing_healthy_warning = st.session_state.get("show_healthy_warning", False)
     
     # Se c'è un popup di conferma nella sidebar, blocchiamo il form centrale
     is_confirming_exit = st.session_state.get("confirm_back_from_eval", False)
-    is_form_disabled = st.session_state.eval_submitting or is_confirming_exit
+
+    is_form_disabled = (
+        st.session_state.eval_submitting or 
+        is_confirming_exit or 
+        is_showing_healthy_warning  
+    )
 
     # sidebar riepilogo 
     back_action = _render_evaluation_sidebar(conversation, current_item, mode)
@@ -77,127 +85,176 @@ def render_evaluation_form(
     # info box iniziale
     _render_info_box(mode, current_item)
 
-    # Assicura che la session key esista per la selezione item (exploratory)
-    if 'eval_selected_item_id' not in st.session_state:
-        st.session_state['eval_selected_item_id'] = None
+    # Inizializzazione variabili per il submit
+    user_eval = None
+    notes = ""
 
-    selected_item_id = None
-    selected_item = None
+    # === LOGICA DIFFERENZIATA PER MODALITÀ ===
+    
+    if mode == "guided":
+        # --- MODALITÀ GUIDATA (Singolo Item) ---
+        st.markdown(f"## 📊 Attribuzione Grado: {current_item.title}")
+        st.markdown("**Campo obbligatorio** - Valuta la severità osservata (0-4)")
 
-    if mode == "exploratory":
-        st.markdown("## 🔍 Identificazione Item TALD")
-        st.markdown("**Campo obbligatorio** - Identifica quale disturbo hai osservato")
-
-        # prepara etichette per selectbox (più leggibile)
-        options = [f"-- Seleziona item --"]
-        id_map: Dict[str, Optional[int]] = {options[0]: None}
-        for it in tald_items:
-            label = f"{it.id}. {it.title}"
-            options.append(label)
-            id_map[label] = it.id
-
-        # mantiene scelta in session_state per aggiornare dinamicamente il legend
-        selected_label = st.selectbox(
-            "Cerca e seleziona l'item manifestato:",
-            options=options,
-            index=0,
-            key="eval_item_selector",
-            help="Inizia a digitare per filtrare tra i 30 item TALD disponibili",
+        # Usa il selettore dinamico specifico per l'item corrente
+        grade = _render_dynamic_grade_selector(current_item, key_suffix="guided", disabled=is_form_disabled)
+        
+        st.markdown("---")
+        
+        # Campo Note
+        st.markdown("## 📝 Note Personali")
+        st.markdown("*Campo opzionale* - Aggiungi osservazioni sul tuo ragionamento diagnostico")
+        notes = st.text_area(
+            "Le tue note:",
+            height=120,
+            placeholder="Es: Ho notato...",
+            label_visibility="collapsed",
+            key="eval_notes_guided",
             disabled=is_form_disabled
         )
+        
+        # Prepariamo i dati per il submit (singolo valore)
+        submit_data = grade
 
-        selected_item_id = id_map.get(selected_label)
-        st.session_state['eval_selected_item_id'] = selected_item_id
+    else:
+        # --- MODALITÀ ESPLORATIVA (Scheda Completa 30 Item) ---
+        st.markdown("## 📋 Scheda di Valutazione TALD")
+        st.info("Compila la scheda assegnando un grado (0-4) ai disturbi rilevati. Lascia a 0 quelli assenti.")
 
-        if selected_item_id:
-            selected_item = next((x for x in tald_items if x.id == selected_item_id), None)
-            with st.expander(f"📖 Dettagli {selected_item.title}" if selected_item else "📖 Dettagli"):
-                if selected_item:
-                    st.markdown(f"**Tipo:** {selected_item.type.capitalize()}")
-                    st.markdown(f"**Descrizione:**\n{selected_item.description}")
+        # Inizializzazione dello sheet in session state per persistenza
+        if "exploratory_sheet" not in st.session_state:
+            st.session_state.exploratory_sheet = {}
+
+        evaluation_sheet = st.session_state.exploratory_sheet
+
+        # --- FILTRI (Ricerca + Tipo) ---
+        col_search, col_filter = st.columns([3, 1])
+        
+        with col_search:
+            search_query = st.text_input(
+                "🔍 Cerca disturbo...", 
+                placeholder="Digita per cercare (es. 'block', 'thought')...",
+                label_visibility="collapsed",
+                disabled=is_form_disabled
+            )
+            
+        with col_filter:
+            filter_type = st.selectbox(
+                "Filtra per tipo",
+                ["Tutti", "Oggettivi", "Soggettivi"],
+                label_visibility="collapsed",
+                disabled=is_form_disabled
+            )
+        
+        # 1. Filtro Testuale (Base)
+        if search_query:
+            filtered_items = [
+                i for i in tald_items 
+                if search_query.lower() in i.title.lower() or search_query.lower() in i.description.lower()
+            ]
+        else:
+            filtered_items = tald_items
+
+        # 2. Suddivisione liste (dopo filtro testo)
+        obj_filtered = [i for i in filtered_items if i.is_objective()]
+        subj_filtered = [i for i in filtered_items if i.is_subjective()]
+
+        # 3. Rendering Condizionale (Logica del Dropdown)
+        items_shown = False # Flag per sapere se abbiamo mostrato qualcosa
+
+        # SEZIONE OGGETTIVI: Mostra se il filtro è 'Tutti' o 'Oggettivi' E ci sono item
+        if filter_type in ["Tutti", "Oggettivi"] and obj_filtered:
+            st.markdown('<h3 class="section-title">👁️ Fenomeni Oggettivi (osservabili)</h3>', unsafe_allow_html=True)
+            _render_item_grid(obj_filtered, evaluation_sheet, is_form_disabled)
+            items_shown = True
+        
+        # SEZIONE SOGGETTIVI: Mostra se il filtro è 'Tutti' o 'Soggettivi' E ci sono item
+        if filter_type in ["Tutti", "Soggettivi"] and subj_filtered:
+            if items_shown: st.markdown("---") # Separatore estetico se c'era la sezione prima
+            st.markdown('<h3 class="section-title">💭 Fenomeni Soggettivi (riportati)</h3>', unsafe_allow_html=True)
+            _render_item_grid(subj_filtered, evaluation_sheet, is_form_disabled)
+            items_shown = True
+
+        # Messaggio se i filtri hanno nascosto tutto
+        if not items_shown:
+            st.warning("Nessun item corrisponde ai criteri di ricerca selezionati.")
 
         st.markdown("---")
 
-    # --- Grade selector (dinamico) ---
-    st.markdown("## 📊 Attribuzione Grado TALD")
-    st.markdown("**Campo obbligatorio** - Valuta la severità osservata (0-4)")
-
-    # determina item di riferimento per legenda: in guided -> current_item, in exploratory -> selected_item
-    item_for_legend = current_item if mode == "guided" else (selected_item if selected_item else None)
-
-    grade = _render_dynamic_grade_selector(item_for_legend, disabled=is_form_disabled)
+        # Campo Note
+        st.markdown("## 📝 Note Personali")
+        notes = st.text_area(
+            "Le tue note:",
+            height=120,
+            placeholder="Motiva la diagnosi...",
+            label_visibility="collapsed",
+            key="eval_notes_exploratory",
+            disabled=is_form_disabled
+        )
+        
+        # Prepariamo i dati per il submit (intero sheet)
+        submit_data = evaluation_sheet
 
     st.markdown("---")
 
-    # --- Note ---
-    st.markdown("## 📝 Note Personali")
-    st.markdown("*Campo opzionale* - Aggiungi osservazioni sul tuo ragionamento diagnostico")
-
-    notes = st.text_area(
-        "Le tue note:",
-        height=120,
-        placeholder="Es: Ho notato almeno 4 intrusioni significative durante l'intervista...",
-        label_visibility="collapsed",
-        key="eval_notes",
-        disabled=is_form_disabled
-    )
-
-    st.caption("💡 Queste note appariranno nel report finale e ti aiuteranno a riflettere sulla valutazione")
-
-    st.markdown("")
-    st.markdown("---")
-
-    # 1. Inizializzazione stati se non esistono
+    # 1. Inizializzazione stati errore
     if 'eval_error_message' not in st.session_state:
         st.session_state.eval_error_message = None
     if 'eval_message_type' not in st.session_state:
         st.session_state.eval_message_type = "warning"
     if 'eval_message_icon' not in st.session_state:
         st.session_state.eval_message_icon = "⚠️"    
-    if 'eval_submitting' not in st.session_state:
-        st.session_state.eval_submitting = False
 
     def _lock_submission():
         st.session_state.eval_submitting = True
         st.session_state.eval_error_message = None
 
-    # 2. DEFINIZIONE COLONNE CENTRALI
+    # 2. BOTTONE CONFERMA
     _, col_center, _ = st.columns([1, 1.5, 1])
 
-    with col_center:
-        # A. Placeholder Errore (DENTRO la colonna centrale)
-        error_container = st.empty()
-        
-        # B. Spaziatura
-        st.markdown("")
-        
-        # C. Bottone
-        st.button(
-            "Conferma Valutazione ▶️", 
-            use_container_width=True, 
-            type="primary",
-            disabled=is_form_disabled,
-            on_click=_lock_submission
-        )
+    # Nascondi il pulsante "Conferma Valutazione" se il warning è attivo
+    if not is_showing_healthy_warning:
+        # Rendering del pulsante Conferma
+        _, col_center, _ = st.columns([1, 1.5, 1])
+        with col_center:
+            error_container = st.empty()
+            st.markdown("")
+            st.button(
+                "Conferma Valutazione ▶️", 
+                use_container_width=True, 
+                type="primary",
+                disabled=is_form_disabled,
+                on_click=_lock_submission
+            )
 
     # 3. Logica di Elaborazione
     if st.session_state.eval_submitting:
         try:
-            # VALIDAZIONI
             if mode == "exploratory":
-                selected_id_session = st.session_state.get('eval_selected_item_id')
-                if selected_id_session is None:
-                    raise EvaluationValidationError("Seleziona l'item TALD che hai identificato per procedere.")
+                # Verifica se tutti i valori sono 0 o None
+                is_empty_sheet = not submit_data or all(v == 0 for v in submit_data.values())
+                
+                # Se la scheda è vuota E l'utente non ha ancora confermato esplicitamente
+                if is_empty_sheet and not st.session_state.get("confirm_healthy_patient", False):
+                    st.session_state.eval_submitting = False  # Blocca l'invio
+                    st.session_state.show_healthy_warning = True  # Mostra il warning
+                    st.rerun()
 
-            if grade is None:
+            if mode == "guided" and submit_data is None:
                 raise EvaluationValidationError("Seleziona un grado di severità (0-4) per completare la valutazione.")
 
-            # CREAZIONE OGGETTO
+            # VALIDAZIONE TRAMITE SERVICE
             if mode == "guided":
-                user_eval = EvaluationService.create_guided_evaluation(grade=grade, notes=notes)
+                user_eval = EvaluationService.create_guided_evaluation(
+                    target_item_id=current_item.id,
+                    grade=submit_data,
+                    notes=notes
+                )
             else:
                 user_eval = EvaluationService.create_exploratory_evaluation(
-                    item_id=selected_id_session, grade=grade, items=tald_items, notes=notes
+                    evaluation_sheet=submit_data,
+                    all_items=tald_items,
+                    notes=notes
                 )
 
             return user_eval 
@@ -216,9 +273,32 @@ def render_evaluation_form(
             st.session_state.eval_message_icon = "❌"
             st.rerun()
 
+    # Rendering del Warning 
+    if is_showing_healthy_warning:
+        st.warning("""
+        ⚠️ **Attenzione: Nessun disturbo rilevato**
+        
+        Tutti i valori sono a 0. Stai indicando che il paziente è **ASINTOMATICO (Sano)**.
+        Sei sicuro di non aver rilevato alcun fenomeno TALD?
+        """)
+
+        col_h1, col_h2 = st.columns(2)
+        with col_h1:
+            if st.button("❌ No, ho dimenticato di compilare", use_container_width=True):
+                st.session_state.show_healthy_warning = False
+                st.rerun()
+        with col_h2:
+            if st.button("✅ Sì, confermo Paziente Sano", use_container_width=True, type="primary"):
+                st.session_state.confirm_healthy_patient = True # Sblocca il check
+                st.session_state.show_healthy_warning = False
+                _lock_submission() # Ri-innesca il submit
+                st.rerun()
+        
+        # Interrompe qui il rendering per impedire di vedere errori doppi
+        return None
+
     # 4. Rendering del Messaggio di Errore
     if st.session_state.eval_error_message:
-        # Scrive nel container 
         with error_container.container():
             if st.session_state.eval_message_type == "error":
                 st.error(st.session_state.eval_error_message, icon=st.session_state.eval_message_icon)
@@ -228,15 +308,68 @@ def render_evaluation_form(
     return None
 
 
-def _clear_error_state():
+def _render_item_grid(items: List[TALDItem], sheet_storage: Dict, disabled: bool):
     """
-    Helper per pulire i messaggi di errore dalla sessione.
-    Da chiamare quando si esce dalla pagina.
+    Renderizza la griglia di item con selettori per ciascuno.
     """
-    keys = ['eval_error_message', 'eval_message_type', 'eval_message_icon', 'eval_submitting']
-    for k in keys:
-        if k in st.session_state:
-            del st.session_state[k]
+    for item in items:
+        current_val = sheet_storage.get(item.id, 0)
+
+        with st.container(border=True):
+            st.markdown(f"##### {item.id}. {item.title}")
+
+            with st.expander("ℹ️ Guida Clinica (Descrizione, Criteri, Esempi)"):
+                st.markdown(f"**Descrizione:** {item.description}")
+                st.markdown(f"**Criteri Diagnostici:** {item.criteria}")
+                st.info(f"**Esempio:** {item.example}")
+
+            st.markdown("---")
+
+            options = []
+            format_map = {}
+
+            for g in range(5):
+                raw = item.graduation.get(str(g), "").strip()
+
+                grade_text = ""
+                desc_text = ""
+
+                if ":" in raw:
+                    parts = raw.split(":", 1)
+                    grade_text = parts[0].strip()
+                    desc_text = parts[1].strip()
+                else:
+                    grade_text = raw
+                    desc_text = ""
+
+                if not grade_text:
+                    grade_text = f"Livello {g}"
+                
+                grade_text = grade_text.capitalize()
+
+                if desc_text:
+                    option_label = f"{g} = **{grade_text}**: *{desc_text}*"
+                else:
+                    option_label = f"{g} = **{grade_text}**"
+
+                options.append(option_label)
+                format_map[option_label] = g
+
+            selected_label = st.radio(
+                label=f"Valutazione {item.title}",
+                options=options,
+                index=(current_val if 0 <= current_val < len(options) else None),
+                key=f"rad_item_{item.id}",
+                disabled=disabled,
+                label_visibility="collapsed"
+            )
+
+            if selected_label is None:
+                selected_grade = 0
+            else:
+                selected_grade = format_map[selected_label]
+
+            sheet_storage[item.id] = selected_grade
 
 
 def _render_header(mode: str):
@@ -275,146 +408,57 @@ def _render_info_box(mode: str, current_item: TALDItem):
         st.warning("""
         **🔍 Modalità Esplorativa**
         
-        Il paziente ha manifestato un disturbo TALD specifico durante l'intervista.
-        
-        Devi:
-        1. **Identificare** quale item TALD hai osservato
-        2. **Valutare** il grado di severità (0-4) manifestato
+        Il paziente presentava un quadro clinico complesso (uno, più disturbi o nessuno).
+        Compila la scheda completa assegnando un grado ai sintomi presenti.
         """)
 
 
-def _render_dynamic_grade_selector(item: Optional[TALDItem], disabled: bool = False) -> int:
+def _render_dynamic_grade_selector(item: TALDItem, key_suffix: str, disabled: bool) -> int:
     """
-    Rendering dinamico della scala 0–4 in funzione dell'item selezionato.
-    
-    - Se l'item è noto (guided o exploratory con item selezionato):
-      usa label e descrizioni specifiche dell'item.
-    - Se l'item non è disponibile, usa etichette generiche TALD.
-
-    Ritorna il grado selezionato (int).
+    Render dinamico della scala 0-4 per un singlolo item.
     """
-
-    # Preparazione opzioni radio
     options = []
     format_map = {}
 
     for g in range(5):
-        if item:
-            # Estrae il nome del livello dal campo graduation dell'item
-            label = _extract_grade_label_from_item(item, g)
-            option_label = f"{g} – {label}"
+        raw = item.graduation.get(str(g), "").strip()
+
+        grade_text = ""
+        desc_text = ""
+
+        if ":" in raw:
+            parts = raw.split(":", 1)
+            grade_text = parts[0].strip()
+            desc_text = parts[1].strip()
         else:
-            # Fallback a etichette generiche
-            option_label = f"{g} – {_get_generic_grade_label(g)}"
+            grade_text = raw
+            desc_text = ""
+
+        if not grade_text:
+            grade_text = f"Livello {g}"
+
+        grade_text = grade_text.capitalize()    
+
+        if desc_text:
+            option_label = f"{g} = **{grade_text}**: *{desc_text}*"
+        else:
+            option_label = f"{g} = **{grade_text}**"
 
         options.append(option_label)
         format_map[option_label] = g
 
-    # Radio button con etichette già formattate
     selected_label = st.radio(
         "Seleziona il grado osservato:",
         options=options,
         index=None,
-        key="eval_grade_selector",
-        help="Scegli il livello che più rappresenta la manifestazione osservata",
+        key=f"eval_grade_selector_{key_suffix}",
         disabled=disabled
     )
 
     if selected_label is None:
-        selected_grade = None
-    else:
-        selected_grade = format_map[selected_label]
+        return None
 
-
-    # Mostra legenda sotto il selettore
-    if item:
-        # Costruzione dinamica della lista descrizioni basata sul JSON dell'item
-        lines = []
-        for g in range(5):
-            raw_desc = item.get_grade_description(g)
-            
-            # Separiamo "Nome Livello" da "Descrizione"
-            parts = raw_desc.split(':', 1)
-            
-            if len(parts) == 2:
-                # Caso: "Lieve: descrizione..."
-                level_name = parts[0].strip().capitalize()
-                description = parts[1].strip()
-                # Formato: 2 = **Lieve**: *descrizione*
-                line = f"<li>{g} = <b>{level_name}</b>: <i>{description}</i></li>"
-            else:
-                # Caso: "Lieve" (senza descrizione extra)
-                level_name = raw_desc.strip().capitalize()
-                line = f"<li>{g} = <b>{level_name}</b></li>"
-            
-            lines.append(line)
-
-        legend_html = (
-            "<div class='grade-legend'>"
-            "<h4>Criteri specifici:</h4>"
-            "<ul>" + "".join(lines) + "</ul>"
-            "</div>"
-        )
-        st.markdown(legend_html, unsafe_allow_html=True)
-        
-    else:
-        # Legend generica, usata solo se item non selezionato (exploratory pre-selezione)
-        st.info("""
-        **Scala TALD standard:**
-        - **0**: Disturbo non presente
-        - **1**: Dubbio/Minimo
-        - **2**: Lieve
-        - **3**: Moderato
-        - **4**: Severo
-        """)
-
-    return selected_grade
-
-
-def _extract_grade_label_from_item(item: TALDItem, grade: int) -> str:
-    """
-    Estrae il "nome" del livello di gravità dagli item TALD.
-
-    I campi graduation nel JSON hanno struttura:
-    "2": "Lieve: tendenza alla deviazione del tema..."
-
-    Da qui estraggo:
-    - prima della ':' se esiste
-    - altrimenti prima del primo '.', come fallback
-    - se non trovato, restituisco stringa ripulita e capitalizzata
-    """
-
-    try:
-        raw = item.graduation.get(str(grade)) if hasattr(item, "graduation") else None
-
-        if not raw:
-            return _get_generic_grade_label(grade)
-
-        if ":" in raw:
-            return raw.split(":", 1)[0].strip().capitalize()
-
-        if "." in raw:
-            return raw.split(".", 1)[0].strip().capitalize()
-
-        return raw.strip().capitalize()
-
-    except Exception:
-        # Protezione in caso di errore inatteso nella struttura del JSON
-        return _get_generic_grade_label(grade)
-
-
-def _get_generic_grade_label(grade: int) -> str:
-    """
-    Label standard TALD per la scala 0–4.
-    """
-    labels = {
-        0: "Assente",
-        1: "Minimo",
-        2: "Lieve",
-        3: "Moderato",
-        4: "Severo"
-    }
-    return labels.get(grade, "")
+    return format_map[selected_label]
 
 
 def _render_evaluation_sidebar(
@@ -424,17 +468,6 @@ def _render_evaluation_sidebar(
 ) -> Optional[str]:
     """
     Sidebar con riepilogo coerente alle altre view.
-
-    Mostra:
-    - Statistiche conversazione
-    - Info item (solo in modalità guidata)
-    - Suggerimenti
-    - Bottone back con warning inline
-    
-    Returns:
-        "RESET": torna a selezione modalità
-        "BACK_TO_ITEMS": torna a selezione item (guided)
-        None: nessuna azione
     """
     with st.sidebar:
 
@@ -453,13 +486,11 @@ def _render_evaluation_sidebar(
         if mode == "guided":
             st.markdown("## 📋 Item Simulato")
             st.info(f"**{current_item.id}. {current_item.title}**\n\nTipo: {current_item.type.capitalize()}")
-
             with st.expander("📖 Criteri diagnostici"):
                 st.markdown(current_item.criteria)
-
         else:
             st.markdown("## 📋 Obiettivo")
-            st.warning("**Identifica l'item TALD** e valutane il grado di manifestazione.")
+            st.warning("**Compilazione Scheda TALD**\n\nValuta tutti i 30 item.")
 
         st.markdown("---")
 
@@ -468,10 +499,8 @@ def _render_evaluation_sidebar(
         - Rivedi **mentalmente** la conversazione
         - Valuta **frequenza** manifestazioni
         - Considera **impatto** sulla comunicazione
-        - Sii **onesto** nella valutazione
         """)
 
-        # BACK BUTTON CON WARNING INLINE
         st.markdown("---")
         
         # Controlla se c'è warning attivo
@@ -480,7 +509,7 @@ def _render_evaluation_sidebar(
         
         # Bottone normale
         label = "← Torna a Selezione Item" if mode == "guided" else "← Torna a Selezione Modalità"
-        # Disabilita il bottone se stiamo inviando
+        
         if st.button(label, use_container_width=True, disabled=st.session_state.eval_submitting):
             st.session_state.confirm_back_from_eval = True
             st.rerun()
@@ -491,10 +520,6 @@ def _render_evaluation_sidebar(
 def _render_sidebar_back_warning(mode: str) -> Optional[str]:
     """
     Renderizza il warning di conferma DENTRO la sidebar.
-    
-    Returns:
-        "RESET" o "BACK_TO_ITEMS" se confermato
-        None se annullato
     """
     st.warning("""
     ⚠️ **Attenzione**
@@ -514,7 +539,10 @@ def _render_sidebar_back_warning(mode: str) -> Optional[str]:
         if st.button("✅ Conferma", use_container_width=True, type="primary", key="confirm_back_eval"):
             del st.session_state["confirm_back_from_eval"]
             
-            _clear_error_state()
+            # Pulizia stati locali
+            keys = ['eval_error_message', 'eval_message_type', 'eval_submitting', 'exploratory_sheet']
+            for k in keys:
+                if k in st.session_state: del st.session_state[k]
 
             if mode == "guided":
                 return "BACK_TO_ITEMS"

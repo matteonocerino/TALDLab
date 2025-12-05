@@ -13,10 +13,11 @@ import base64
 import os
 import html
 import time
+import socket
 import google.generativeai as genai
 
 from typing import Optional
-from datetime import timedelta
+from datetime import datetime
 
 from src.models.conversation import ConversationHistory
 from src.models.tald_item import TALDItem
@@ -63,40 +64,35 @@ def _force_rebuild_llm_service(llm_service):
         return False
 
 
-def _rebuild_session_with_history(llm_service, tald_item, grade, conversation):
+def _rebuild_session_with_history(llm_service, conversation, all_tald_items, active_items=None):
     """
-    Ricostruisce una sessione Gemini PULITA mantenendo la memoria dello storico.
+    Ricostruisce una sessione Gemini pulita mantenendo lo storico.
     """
-    
-    # 1. Forza ricostruzione completa del modello LLM
+
+    # 1. Ricostruzione completa del servizio
     success = _force_rebuild_llm_service(llm_service)
     if not success:
         raise LLMConnectionError("Impossibile ricostruire il servizio LLM")
 
-    # 2. Prepara lo storico nel formato Gemini
-    history_data = []
-    
+    # 2. Risolvi active_items 
+    if active_items is None:
+        try:
+            active_items = st.session_state.session.ground_truth.active_items
+        except Exception as e:
+            raise LLMConnectionError("Impossibile determinare active_items per la sessione: " + str(e))
+
+    # 3. Crea una nuova sessione con il prompt corretto
+    new_session = llm_service.start_chat_session(
+        active_items=active_items,
+        all_tald_items=all_tald_items
+    )
+
+    # 4. Ricostruisci storicamente i messaggi dell'utente e del modello
     for msg in conversation.messages:
         if not msg.content:
             continue
-            
-        role = "user" if msg.is_user_message() else "model"
-        history_data.append({
-            "role": role,
-            "parts": [msg.content]
-        })
+        new_session.send_message(msg.content)
 
-    # 3. Costruisci la nuova sessione con system prompt
-    system_prompt = llm_service._build_system_prompt(tald_item, grade)
-    
-    full_history = [
-        {'role': 'user', 'parts': [system_prompt]},
-        {'role': 'model', 'parts': ["Ok."]}
-    ] + history_data
-
-    # 4. Crea la NUOVA sessione con il modello RICOSTRUITO
-    new_session = llm_service.model.start_chat(history=full_history)
-    
     return new_session
 
 
@@ -112,24 +108,41 @@ def render_chat_interface(
     Renderizza l'interfaccia di chat.
     Returns: True se l'utente termina l'intervista, "reset" se torna indietro, False altrimenti.
     """
+    
+    if "is_processing" not in st.session_state:
+        st.session_state.is_processing = False
+
+    if "current_prompt_processing" not in st.session_state:
+        st.session_state.current_prompt_processing = None
 
     # 1. Inizializzazione Sessione 
     if "chat_session" not in st.session_state:
-        # Se abbiamo già messaggi nello storico, DOBBIAMO ricostruire la memoria di Gemini
-        if conversation.get_message_count() > 0:
+        # Prendi active_items dal SessionState vero (non da conversation)
+        try:
+            active_items = st.session_state.session.ground_truth.active_items
+        except Exception:
+            active_items = {}  # fallback: nessun item attivo
+
+        all_tald_items = st.session_state.tald_items
+
+        if conversation.get_message_count() > 0 and conversation.session_start is not None:
             try:
                 st.session_state.chat_session = _rebuild_session_with_history(
-                    llm_service, tald_item, grade, conversation
+                    llm_service,
+                    conversation,
+                    all_tald_items,
+                    active_items=active_items
                 )
             except Exception:
-                # Se fallisce, fallback su sessione nuova 
-                st.session_state.chat_session = llm_service.start_chat_session(tald_item, grade)
+                st.session_state.chat_session = llm_service.start_chat_session(
+                    active_items,
+                    all_tald_items
+                )
         else:
-            # Nuova sessione pulita
-            st.session_state.chat_session = llm_service.start_chat_session(tald_item, grade)
-
-    if "is_processing" not in st.session_state:
-        st.session_state.is_processing = False
+            st.session_state.chat_session = llm_service.start_chat_session(
+                active_items,
+                all_tald_items
+            )
 
     # Renderizzazione componenti statici
     _render_header(tald_item, mode)
@@ -188,7 +201,13 @@ def render_chat_interface(
                     should_add_to_history = False
             
             if should_add_to_history:
-                conversation_manager.add_user_message(conversation, prompt)
+                try:
+                    conversation_manager.add_user_message(conversation, prompt)
+                except ValueError as e:
+                    # Gestione elegante dell'errore di lunghezza o contenuto vuoto
+                    st.warning(f"⚠️ Non è stato possibile inviare il messaggio: {str(e)}")
+                    st.session_state.is_processing = False
+                    st.rerun()
             
             # Imposta per elaborazione
             st.session_state.current_prompt_processing = prompt
@@ -225,32 +244,6 @@ def render_chat_interface(
                 )
 
                 elapsed_time = time.time() - start_time # Tempo impiegato per generare QUESTA risposta
-
-                # Se stiamo recuperando da un errore (Riprova), dobbiamo "cucire" il tempo
-                # ignorando i minuti passati nell'errore.
-                if "frozen_duration_during_retry" in st.session_state:
-                    
-                    # 1. Recuperiamo quanto doveva essere il tempo prima di questa generazione
-                    frozen_minutes = st.session_state["frozen_duration_during_retry"]
-                    
-                    # 2. Calcoliamo quanto tempo di generazione (in minuti) abbiamo appena speso
-                    elapsed_minutes = elapsed_time / 60.0
-                    
-                    # 3. Il nuovo "Totale Ideale" dovrebbe essere: Vecchio Totale + Tempo Generazione
-                    target_total_minutes = frozen_minutes + elapsed_minutes
-                    
-                    # 4. Vediamo quanto segna l'orologio "reale" (che include il tempo perso nell'errore)
-                    current_real_minutes = conversation.get_duration_minutes()
-                    
-                    # 5. Calcoliamo il tempo "morto" da sottrarre
-                    dead_time_minutes = current_real_minutes - target_total_minutes
-                    
-                    # 6. Spostiamo l'inizio della sessione in avanti per nascondere il tempo morto
-                    if dead_time_minutes > 0:
-                         conversation.session_start += timedelta(minutes=dead_time_minutes)
-        
-                    # Pulizia
-                    del st.session_state["frozen_duration_during_retry"]
                 
             except Exception as e:
                 # Rimuovi la risposta assistant incompleta (se presente)
@@ -261,9 +254,13 @@ def render_chat_interface(
                 if conversation.messages and conversation.messages[-1].is_user_message():
                     conversation.messages.pop()
 
-                # === CALCOLO MINUTI CONGELATI ===
-                # Salviamo i minuti validi attuali (che ora puntano all'ultimo messaggio di successo)
-                frozen_duration = conversation.get_duration_minutes()
+                # CALCOLA IL TEMPO VALIDO (senza offset, tempo reale)
+                if conversation.messages:
+                    last_valid_msg = conversation.messages[-1]
+                    frozen_duration = (last_valid_msg.timestamp - conversation.session_start).total_seconds() / 60
+                    frozen_duration = max(0.0, frozen_duration)
+                else:
+                    frozen_duration = 0.0
 
                 # Classifica errore
                 error_type = "Generic"
@@ -282,7 +279,7 @@ def render_chat_interface(
                     "type": error_type,
                     "message": error_message,
                     "last_prompt": prompt,
-                    "frozen_duration": frozen_duration # Salviamo il tempo "congelato"
+                    "frozen_duration": frozen_duration 
                 }
                 
                 # Distruggi sessione corrotta
@@ -417,23 +414,31 @@ def _handle_llm_error_display(conversation, tald_item, grade, llm_service, mode)
                         key="download_transcript_btn"
                     )
                 with b2:
-                    _render_retry_button(llm_service, tald_item, grade, conversation, last_prompt)
+                    _render_retry_button(llm_service, conversation, last_prompt)
             else:
                 # Se NON c'è storico: Mostra SOLO bottone Riprova (Centrato)
                 # È inutile salvare una trascrizione vuota
-                _render_retry_button(llm_service, tald_item, grade, conversation, last_prompt)
+                _render_retry_button(llm_service, conversation, last_prompt)
 
 
-def _render_retry_button(llm_service, tald_item, grade, conversation, last_prompt):
+def _render_retry_button(llm_service, conversation, last_prompt):
     """Helper per il bottone Riprova."""
     if st.button("🔄 Riprova invio messaggio", use_container_width=True, type="primary"):
         try:
-            # Recupera il tempo congelato
-            saved_frozen_duration = st.session_state.llm_error.get("frozen_duration", conversation.get_duration_minutes())
+            socket.create_connection(("www.google.com", 80), timeout=1)
+        except OSError:
+            return
+        
+        try:
+            # 1. Salva il tempo congelato
+            saved_frozen_duration = st.session_state.llm_error.get("frozen_duration", 0.0)
 
-            # Chiama la funzione helper 
+            # 2. Ricostruisci sessione
             new_session = _rebuild_session_with_history(
-                llm_service, tald_item, grade, conversation
+                llm_service,
+                conversation,
+                st.session_state.tald_items,
+                active_items = st.session_state.session.ground_truth.active_items
             )
                     
             # Aggiorna la sessione
@@ -442,8 +447,13 @@ def _render_retry_button(llm_service, tald_item, grade, conversation, last_promp
             # Rimette il prompt in coda
             st.session_state.pending_prompt = last_prompt
 
-            # IMPORTANTE: Passa il tempo congelato alla fase successiva
-            st.session_state.frozen_duration_during_retry = saved_frozen_duration
+            # 3. CALCOLA QUANTO TEMPO È PASSATO DA QUANDO HAI SALVATO L'ERRORE
+            if conversation.messages:
+                current_time_raw = (datetime.now() - conversation.session_start).total_seconds() / 60
+                time_lost = current_time_raw - saved_frozen_duration
+                
+                # Aggiungi il tempo perso all'offset (si accumula se ci sono più errori)
+                conversation.time_lost_offset += max(0.0, time_lost)
                     
             # Rimuove l'errore
             del st.session_state["llm_error"]
@@ -541,7 +551,7 @@ def _render_initial_instructions(mode: str, tald_item: Optional[TALDItem] = None
     if mode == "guided":
         st.info(f"**Obiettivo:** Interagisci con il paziente per osservare le manifestazioni di **{tald_item.title}** e valutarne il grado.")
     else:
-        st.info("**Obiettivo:** Interagisci con il paziente per **identificare il disturbo** nascosto e valutarne il grado.")
+        st.info("**Obiettivo:** Interagisci con il paziente per identificare eventuali fenomeni TALD presenti e valutarne la severità quando emergono.")
 
 
 def render_chat_sidebar(conversation: ConversationHistory, tald_item: TALDItem, mode: str):
@@ -561,7 +571,7 @@ def render_chat_sidebar(conversation: ConversationHistory, tald_item: TALDItem, 
             display_minutes = conversation.get_duration_minutes()
 
         with col1: st.metric("Messaggi", conversation.get_message_count())
-        with col2: st.metric("Minuti", display_minutes)
+        with col2: st.metric("Minuti", f"{display_minutes:.2f}")
         st.caption(f"Parole scambiate: {conversation.get_total_words()}")
         
         st.markdown("---")
@@ -573,7 +583,8 @@ def render_chat_sidebar(conversation: ConversationHistory, tald_item: TALDItem, 
                 st.markdown(f"**Descrizione:** *{tald_item.description}*")
         else:
             st.markdown("## 🔍 Obiettivo")
-            st.warning("**Identifica l'item TALD** e il suo grado di manifestazione.")
+            st.warning("""
+            **Individua eventuali fenomeni TALD** e valuta il grado di manifestazione per quelli rilevati.""")
         
         st.markdown("---")
         st.markdown("## 💡 Suggerimenti")
