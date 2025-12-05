@@ -2,15 +2,15 @@
 Evaluation Models - Modelli per valutazioni e confronti
 
 Questo modulo contiene le classi per gestire:
-- La valutazione fornita dall'utente
-- Il ground truth della simulazione
-- Il risultato del confronto tra valutazione e ground truth
+- La valutazione fornita dall'utente (Scheda completa o singolo voto)
+- Il ground truth della simulazione (Uno o più disturbi in comorbilità)
+- Il risultato del confronto vettoriale (Matrice di confusione TP/FP/FN)
 
 Entity del pattern Entity-Control-Boundary (vedi RAD sezione 2.6.1)
 """
 
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Dict, List
 from datetime import datetime
 
 
@@ -19,70 +19,74 @@ class UserEvaluation:
     """
     Rappresenta la valutazione fornita dall'utente al termine dell'intervista.
     
+    Implementa le specifiche del RAD per la raccolta dati (RF_6).
+    
+    In modalità Esplorativa: rappresenta l'intera 'Scheda di Valutazione TALD',
+    dove l'utente assegna un grado (0-4) a ciascuno dei 30 item.
+    
+    In modalità Guidata: contiene principalmente il voto per l'item target,
+    
     Attributes:
-        grade (int): Grado attribuito dall'utente sulla scala TALD (0-4)
-        item_id (Optional[int]): ID dell'item identificato (solo modalità esplorativa)
-        notes (str): Note opzionali dell'utente
-        timestamp (datetime): Momento della valutazione
+        evaluation_sheet (Dict[int, int]): Mappa {item_id: grade}. 
+                                           Es: {1: 0, 5: 3, 12: 2...}
+                                           Rappresenta il vettore dei voti assegnati.
+        notes (str): Note cliniche opzionali inserite dall'utente per 
+                     giustificare la diagnosi.
+        timestamp (datetime): Momento esatto della conferma della valutazione.
     
     Example:
-        >>> # Modalità guidata (item già noto)
-        >>> eval_guided = UserEvaluation(
-        ...     grade=3,
-        ...     item_id=None,
-        ...     notes="Il paziente mostrava segni chiari"
-        ... )
-        >>> 
-        >>> # Modalità esplorativa (utente identifica l'item)
-        >>> eval_exploratory = UserEvaluation(
-        ...     grade=2,
-        ...     item_id=5,
-        ...     notes="Crosstalk evidente nelle risposte"
+        >>> # Utente identifica Crosstalk (5) moderato e Paraphasia (12) lieve
+        >>> eval = UserEvaluation(
+        ...     evaluation_sheet={5: 3, 12: 2}, 
+        ...     notes="Eloquio difficile da seguire, nessi allentati."
         ... )
     """
     
-    grade: int
-    item_id: Optional[int] = None
+    evaluation_sheet: Dict[int, int]
     notes: str = ""
     timestamp: datetime = None
     
     def __post_init__(self):
-        """Validazione e inizializzazione timestamp."""
-        # Validazione grade
-        if not isinstance(self.grade, int) or not (0 <= self.grade <= 4):
-            raise ValueError(f"Grade deve essere un intero tra 0 e 4, ricevuto: {self.grade}")
+        """
+        Validazione dei dati e inizializzazione timestamp.
         
-        # Validazione item_id (se presente)
-        if self.item_id is not None and not (1 <= self.item_id <= 30):
-            raise ValueError(f"Item ID deve essere tra 1 e 30, ricevuto: {self.item_id}")
+        Raises:
+            ValueError: Se i dati non rispettano i vincoli strutturali o 
+                        i range della scala TALD (0-4).
+        """
+        # Validazione tipo struttura dati
+        if not isinstance(self.evaluation_sheet, dict):
+            raise ValueError("Evaluation sheet deve essere un dizionario {id: grado}")
         
-        # Protezione da note eccessivamente lunghe per compatibilità UI Streamlit
-        if len(self.notes) > 2000:
-            raise ValueError("Notes eccede la lunghezza massima consentita (2000 caratteri).")
+        # Validazione range voti (0-4 come da manuale TALD)
+        for item_id, grade in self.evaluation_sheet.items():
+            if not isinstance(grade, int) or not (0 <= grade <= 4):
+                raise ValueError(f"Grado non valido per item {item_id}: {grade}. Deve essere int 0-4.")
+
+        # Protezione note eccessivamente lunghe per compatibilità UI/DB
+        if len(self.notes) > 5000:
+            raise ValueError("Le note superano la lunghezza massima consentita (5000 caratteri).")
         
         # Imposta timestamp se non fornito
         if self.timestamp is None:
             self.timestamp = datetime.now()
-    
-    def is_exploratory_mode(self) -> bool:
+            
+    def get_grade_for_item(self, item_id: int) -> int:
         """
-        Determina se la valutazione è in modalità esplorativa.
+        Restituisce il voto assegnato dall'utente a uno specifico item.
         
+        Args:
+            item_id (int): L'ID dell'item TALD.
+            
         Returns:
-            bool: True se item_id è specificato (modalità esplorativa)
+            int: Il grado assegnato (0 se l'item non è stato valutato esplicitamente).
         """
-        return self.item_id is not None
+        return self.evaluation_sheet.get(item_id, 0)
     
     def to_dict(self) -> dict:
-        """
-        Converte la valutazione in dizionario.
-        
-        Returns:
-            dict: Rappresentazione dizionario
-        """
+        """Converte l'oggetto in dizionario per serializzazione/log."""
         return {
-            "grade": self.grade,
-            "item_id": self.item_id,
+            "evaluation_sheet": self.evaluation_sheet,
             "notes": self.notes,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None
         }
@@ -91,85 +95,76 @@ class UserEvaluation:
 @dataclass
 class GroundTruth:
     """
-    Rappresenta la configurazione effettiva utilizzata nella simulazione.
+    Rappresenta la configurazione reale della simulazione (la "verità").
+    
+    Supporta la comorbilità: può contenere più item attivi contemporaneamente con diversi gradi.
     
     Attributes:
-        item_id (int): ID dell'item TALD effettivamente simulato
-        item_title (str): Titolo dell'item per reference veloce
-        grade (int): Grado impostato per la simulazione (0-4)
-        mode (str): Modalità utilizzata ("guided" o "exploratory")
-        timestamp (datetime): Momento di creazione del ground truth
-    
+        active_items (Dict[int, int]): Mappa dei disturbi attivi {item_id: grado}.
+                                       Es: {5: 3, 12: 2} (Crosstalk grave + Paraphasia lieve).
+                                       Tutti gli item non presenti in questa lista sono 
+                                       implicitamente a grado 0 (assenti).
+        mode (str): Modalità utilizzata ("guided" o "exploratory").
+        timestamp (datetime): Momento di creazione della configurazione.
+        
     Example:
+        >>> # Simulazione complessa con due disturbi
         >>> gt = GroundTruth(
-        ...     item_id=5,
-        ...     item_title="Crosstalk",
-        ...     grade=2,
+        ...     active_items={5: 3, 22: 2},
         ...     mode="exploratory"
         ... )
-        >>> print(gt.is_guided_mode())
-        False
     """
     
-    item_id: int
-    item_title: str
-    grade: int
+    active_items: Dict[int, int]
     mode: str
     timestamp: datetime = None
     
     def __post_init__(self):
-        """Validazione dati."""
-        # Validazione item_id
-        if not (1 <= self.item_id <= 30):
-            raise ValueError(f"Item ID deve essere tra 1 e 30, ricevuto: {self.item_id}")
-        
-        # Validazione grade
-        if not (0 <= self.grade <= 4):
-            raise ValueError(f"Grade deve essere tra 0 e 4, ricevuto: {self.grade}")
-        
-        # Validazione mode
+        """Validazione integrità configurazione simulazione."""
+        # Validazione active_items
+        if not isinstance(self.active_items, dict):
+             raise ValueError("active_items deve essere un dizionario {id: grado}")
+
+        # Validazione range gradi
+        for item_id, grade in self.active_items.items():
+            if not (0 <= grade <= 4):
+                raise ValueError(f"Grado ground truth non valido per {item_id}. {grade}")
+
+        # Validazione modalità
         if self.mode not in ["guided", "exploratory"]:
-            raise ValueError(
-                f"Mode deve essere 'guided' o 'exploratory', ricevuto: {self.mode}"
-            )
-        
-        # Protezione da titolo vuoto o errato
-        if not self.item_title or not isinstance(self.item_title, str):
-            raise ValueError("Item title non può essere vuoto o non testuale.")
-        
-        # Imposta timestamp se non fornito
+            raise ValueError(f"Mode non valido: {self.mode}")
+            
         if self.timestamp is None:
             self.timestamp = datetime.now()
-    
+
     def is_guided_mode(self) -> bool:
-        """
-        Verifica se la simulazione era in modalità guidata.
-        
-        Returns:
-            bool: True se modalità guidata
-        """
+        """Helper per verificare se la sessione è guidata."""
         return self.mode == "guided"
     
     def is_exploratory_mode(self) -> bool:
-        """
-        Verifica se la simulazione era in modalità esplorativa.
-        
-        Returns:
-            bool: True se modalità esplorativa
-        """
+        """Helper per verificare se la sessione è esplorativa."""
         return self.mode == "exploratory"
-    
-    def to_dict(self) -> dict:
+        
+    def get_primary_item(self) -> tuple[int, int]:
         """
-        Converte il ground truth in dizionario.
+        Restituisce l'item "principale" (utile per titoli o logica guidata).
+        
+        Se ci sono più item, ne restituisce uno arbitrario (il primo delle chiavi).
+        Se non ci sono item (paziente sano), restituisce (0, 0).
         
         Returns:
-            dict: Rappresentazione dizionario
+            tuple: (item_id, grado)
         """
+        if not self.active_items:
+            return (0, 0)
+        # Ordina per grado decrescente e prendi il primo
+        primary_item = max(self.active_items.items(), key=lambda x: x[1])
+        return primary_item
+
+    def to_dict(self) -> dict:
+        """Serializzazione."""
         return {
-            "item_id": self.item_id,
-            "item_title": self.item_title,
-            "grade": self.grade,
+            "active_items": self.active_items,
             "mode": self.mode,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None
         }
@@ -178,109 +173,68 @@ class GroundTruth:
 @dataclass
 class EvaluationResult:
     """
-    Rappresenta l'esito del confronto tra valutazione utente e ground truth.
+    Rappresenta l'esito del confronto vettoriale (Scheda Utente vs Ground Truth).
+    
+    Implementa le metriche richieste dal RAD (RF_7) per la valutazione clinica:
+    - True Positives (TP): Disturbi presenti e correttamente individuati.
+    - False Positives (FP): "Allucinazioni diagnostiche" (visti ma non presenti).
+    - False Negatives (FN): Omissioni (presenti ma non visti).
     
     Attributes:
-        item_correct (Optional[bool]): True se item identificato correttamente 
-                                       (None in modalità guidata)
-        grade_correct (bool): True se grado attribuito correttamente
-        grade_difference (int): Differenza assoluta tra grado utente e ground truth
-        score (int): Punteggio complessivo (0-100)
-        feedback_message (str): Messaggio di feedback generato
-        timestamp (datetime): Momento della valutazione
-    
-    Example:
-        >>> result = EvaluationResult(
-        ...     item_correct=True,
-        ...     grade_correct=False,
-        ...     grade_difference=1,
-        ...     score=75,
-        ...     feedback_message="Item corretto, grado leggermente impreciso"
-        ... )
-        >>> print(result.is_perfect_score())
-        False
+        true_positives (List[int]): Lista ID item correttamente individuati (Grado > 0 in entrambi).
+        false_positives (List[int]): Lista ID item segnalati dall'utente ma assenti nel GT.
+        false_negatives (List[int]): Lista ID item presenti nel GT ma mancati dall'utente.
+        grade_diffs (Dict[int, int]): Differenza di grado per gli item corretti {id: differenza}.
+        score (int): Punteggio calcolato (0-100) basato su pesi configurabili.
+        feedback_message (str): Messaggio descrittivo generato dal motore di confronto.
+        timestamp (datetime): Data/ora del calcolo.
     """
     
-    item_correct: Optional[bool]
-    grade_correct: bool
-    grade_difference: int
-    score: int
+    true_positives: List[int] = field(default_factory=list)
+    false_positives: List[int] = field(default_factory=list)
+    false_negatives: List[int] = field(default_factory=list)
+    grade_diffs: Dict[int, int] = field(default_factory=dict)
+    
+    score: int = 0
     feedback_message: str = ""
     timestamp: datetime = None
     
     def __post_init__(self):
-        """Validazione e inizializzazione."""
-        # Validazione grade_difference
-        if not (0 <= self.grade_difference <= 4):
-            raise ValueError(
-                f"Grade difference deve essere tra 0 e 4, ricevuto: {self.grade_difference}"
-            )
-        
-        # Validazione score
+        """Validazione range punteggio."""
         if not (0 <= self.score <= 100):
-            raise ValueError(f"Score deve essere tra 0 e 100, ricevuto: {self.score}")
-
-        # Pulizia messaggio per compatibilità visuale
-        self.feedback_message = (self.feedback_message or "").strip()
-        if len(self.feedback_message) > 2000:
-            self.feedback_message = self.feedback_message[:2000]
-        
-        # Imposta timestamp se non fornito
+            # Clamp del punteggio per sicurezza
+            self.score = max(0, min(100, self.score))
+            
         if self.timestamp is None:
             self.timestamp = datetime.now()
-    
-    def is_perfect_score(self) -> bool:
-        """
-        Verifica se la valutazione è perfetta (punteggio massimo).
-        
-        Returns:
-            bool: True se score = 100
-        """
-        return self.score == 100
-    
-    def is_passing_score(self, threshold: int = 60) -> bool:
-        """
-        Verifica se il punteggio supera una soglia minima.
-        
-        Args:
-            threshold (int): Soglia minima (default: 60)
-            
-        Returns:
-            bool: True se score >= threshold
-        """
-        return self.score >= threshold
-    
+
     def get_performance_level(self) -> str:
         """
-        Determina il livello di performance basato sul punteggio.
+        Determina il livello qualitativo della performance basato sul punteggio.
         
         Returns:
-            str: Livello di performance ("Eccellente", "Buono", "Sufficiente", "Parziale", "Insufficiente")
+            str: Etichetta testuale (Eccellente, Buono, Sufficiente, ecc.)
         """
-        if self.score >= 90:
-            return "Eccellente"      
-        elif self.score >= 75:
-            return "Buono"           
-        elif self.score >= 60:
-            return "Sufficiente"    
-        elif self.score >= 40:
-            return "Migliorabile"        
-        else:
-            return "Insufficiente"
-    
+        if self.score >= 90: return "Eccellente"
+        if self.score >= 75: return "Buono"
+        if self.score >= 60: return "Sufficiente"
+        if self.score >= 40: return "Migliorabile"
+        return "Insufficiente"
+        
+    def is_passing_score(self) -> bool:
+        """Verifica se la soglia di sufficienza (60/100) è raggiunta."""
+        return self.score >= 60
+
     def to_dict(self) -> dict:
-        """
-        Converte il risultato in dizionario.
-        
-        Returns:
-            dict: Rappresentazione dizionario
-        """
+        """Serializzazione completa per report e log."""
         return {
-            "item_correct": self.item_correct,
-            "grade_correct": self.grade_correct,
-            "grade_difference": self.grade_difference,
+            "metrics": {
+                "TP": self.true_positives,
+                "FP": self.false_positives,
+                "FN": self.false_negatives
+            },
+            "grade_diffs": self.grade_diffs,
             "score": self.score,
-            "feedback_message": self.feedback_message,
-            "performance_level": self.get_performance_level(),
+            "feedback": self.feedback_message,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None
         }

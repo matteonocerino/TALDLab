@@ -7,7 +7,7 @@ Orchestratore principale che coordina tutte le fasi dell'applicazione.
 Autore: Matteo Nocerino
 Matricola: 0512117269
 Relatore: Prof.ssa Rita Francese
-Anno Accademico: 2025/2026
+Anno Accademico: 2024/2025
 """
 
 import streamlit as st
@@ -16,7 +16,6 @@ import time
 
 # Import Models
 from src.models.session_state import SessionState, SessionPhase
-from src.models.conversation import ConversationHistory
 
 # Import Services
 from src.services.configuration_service import ConfigurationService, ConfigurationError
@@ -26,7 +25,7 @@ from src.services.comparison_engine import ComparisonEngine
 from src.services.report_generator import ReportGenerator
 
 # Import Views
-from src.views.mode_selection import render_mode_selection
+from src.views.mode_selection import render_mode_selection, render_mode_info_sidebar
 from src.views.item_selection import render_item_selection
 from src.views.chat_interface import render_chat_interface
 from src.views.evaluation_form import render_evaluation_form
@@ -68,7 +67,7 @@ def configure_streamlit():
             - Studente: Matteo Nocerino
             - Matricola: 0512117269
             - Relatore: Prof.ssa Rita Francese
-            - A.A. 2025/2026
+            - A.A. 2024/2025
             """
         }
     )
@@ -113,10 +112,6 @@ def initialize_application():
             st.session_state.conversation_manager = conversation_manager
             st.session_state.report_generator = report_generator
             
-            # Inizializza session state
-            st.session_state.session = SessionState()
-            st.session_state.conversation = ConversationHistory()
-            
             # Flag inizializzazione completata
             st.session_state.initialized = True
             
@@ -143,6 +138,10 @@ def initialize_application():
             """)
             st.stop()
 
+    # Inizializza session state
+    if 'session' not in st.session_state:
+        st.session_state.session = SessionState()        
+
 
 # ============================================================================
 # GESTIONE FASI (WORKFLOW)
@@ -150,103 +149,141 @@ def initialize_application():
 
 def handle_mode_selection():
     """
-    Gestisce la fase di selezione modalità.
-    
-    Implementa RF_1: selezione modalità di esercizio.
+    Fase 1: Selezione Modalità.
+    Gestisce l'avvio della modalità Guidata o la generazione randomica della Esplorativa.
+
+    Implementa RF_1 e logica di generazione comorbilità (RF_3).
     """
     selected_mode = render_mode_selection()
-
-    from src.views.mode_selection import render_mode_info_sidebar
     render_mode_info_sidebar()
+
+    # Recuperiamo la sessione usando la chiave semplice 'session'
+    session = st.session_state.session
+    all_items = st.session_state.tald_items
     
     if selected_mode == "guided":
-        st.session_state.session.start_guided_mode()
+        # Passa alla selezione item
+        session.start_guided_mode()
         st.rerun()
     
     elif selected_mode == "exploratory":
-        random_item = random.choice(st.session_state.tald_items)
-
-        random_grade = random.randint(1, 4)
+        # === LOGICA GENERAZIONE MULTI-DISTURBO (RF_3) ===
+        # Genera un profilo clinico complesso:
+        # - Da 0 a 25 disturbi attivi (casuali).
+        # - Gradi casuali da 1 a 4 per quelli attivi.
         
-        st.session_state.session.start_exploratory_mode(
-            item_id=random_item.id,
-            item_title=random_item.title,
-            grade=random_grade
-        )
+        num_disturbi = random.randint(0, 25)  # Limite massimo richiesto: 25
         
-        st.session_state.current_item = random_item
+        active_items = {}
+        if num_disturbi > 0:
+            # Campionamento casuale degli item (senza ripetizioni)
+            chosen_items = random.sample(all_items, num_disturbi)
+            
+            # Assegnazione gradi di severità
+            for item in chosen_items:
+                active_items[item.id] = random.randint(1, 4)
         
+        # Avvia sessione esplorativa passando il dizionario completo
+        session.start_exploratory_mode(active_items=active_items)
+        
+        # Imposta un current_item placeholder per non rompere la UI header
+        # (in esplorativa l'utente non deve sapere quale item è attivo)
+        if all_items:
+            st.session_state.current_item = all_items[0] 
+            
         st.rerun()
 
 
 def handle_item_selection():
     """
-    Gestisce la fase di selezione item (solo modalità guidata).
-    
-    Implementa RF_2: gestione item TALD.
+    Fase 2: Selezione Item (Solo Modalità Guidata).
+
+    Implementa RF_2: gestione item TALD e setup singola simulazione.
     """
-    # La funzione render_item_selection può restituire l'item, "reset" o None
-    selected_item_or_action = render_item_selection(st.session_state.tald_items)
+    selection = render_item_selection(st.session_state.tald_items)
+    session = st.session_state.session
     
-    # Caso 1: L'utente ha cliccato "Torna a Selezione Modalità"
-    if selected_item_or_action == "reset":
+    # Navigazione: Reset
+    if selection == "reset":
         reset_application()
         st.rerun()
 
-    # Caso 2: L'utente ha selezionato e confermato un item
-    elif selected_item_or_action:
-        selected_item = selected_item_or_action
+    # Conferma Selezione
+    elif selection:
+        # === LOGICA GENERAZIONE GUIDATA ===
+        # Il grado viene generato casualmente, incluso lo 0 (Paziente Asintomatico)
+        random_grade = random.randint(0, 4)
 
-        random_grade = random.randint(1, 4)
-
-        st.session_state.session.set_selected_item(
-            item_id=selected_item.id,
-            item_title=selected_item.title,
+        session.set_selected_item(
+            item_id=selection.id,
             grade=random_grade
         )
         
-        st.session_state.current_item = selected_item
-        
+        # Salviamo l'item corrente per visualizzarlo nell'header della chat
+        st.session_state.current_item = selection
         st.rerun()
-
-    # Caso 3: Nessuna azione completata, la view continua a essere renderizzata
 
 
 def handle_interview():
     """
-    Gestisce la fase di intervista con paziente virtuale.
-    
+    Fase 3: Intervista con Paziente Virtuale.
     Implementa RF_4, RF_5, RF_11, RF_13.
     """
+    session = st.session_state.session
     current_item = st.session_state.current_item
-    ground_truth = st.session_state.session.ground_truth
+    llm_service = st.session_state.llm_service
     
+    # --- SETUP SESSIONE CHAT ---
+    # inizializziamo la sessione LLM qui nel controller se non esiste.
+    
+    if "chat_session" not in st.session_state:
+        try:
+            # Recupera la configurazione complessa (dizionario {id: grado}) dal Ground Truth
+            active_items_config = session.ground_truth.active_items
+            all_tald_items = st.session_state.tald_items
+            
+            # Inizializza il modello con il System Prompt combinato
+            st.session_state.chat_session = llm_service.start_chat_session(
+                active_items=active_items_config,
+                all_tald_items=all_tald_items
+            )
+        except Exception as e:
+            st.error(f"Errore inizializzazione chat: {e}")
+            return
+
+    # Recuperiamo parametri per la UI (titoli, breadcrumbs)
+    _, primary_grade = session.ground_truth.get_primary_item()
+
+    
+    # Rendering interfaccia chat
+    # NOTA: Passiamo session.conversation che è l'oggetto corretto
     result = render_chat_interface(
-        conversation=st.session_state.conversation,
+        conversation=session.conversation,
         conversation_manager=st.session_state.conversation_manager,
-        llm_service=st.session_state.llm_service,
-        tald_item=current_item,
-        grade=ground_truth.grade,
-        mode=ground_truth.mode
+        llm_service=llm_service,
+        tald_item=current_item, # Usato per l'header grafico
+        grade=primary_grade,    # Usato per l'info box (solo in guidata)
+        mode=session.mode
     )
     
-    # Gestisce reset (torna a selezione modalità)
+    # --- Gestione Navigazione da Chat ---
+    
     if result == "reset":
+        # Torna a selezione modalità
         reset_application()
         st.rerun()
 
     elif result == "back_to_items":
-        # Torna a selezione item senza resettare tutto
-        st.session_state.session.phase = SessionPhase.ITEM_SELECTION
-        st.session_state.conversation.clear()
+        # Torna alla selezione item (solo guidata)
+        session.phase = SessionPhase.ITEM_SELECTION
+        session.conversation.clear()
         if 'chat_session' in st.session_state:
             del st.session_state['chat_session']
-        if 'current_item' in st.session_state:
-            del st.session_state['current_item']
         st.rerun()
 
-    elif result == True:
-        st.session_state.session.terminate_interview()
+    elif result == True: 
+        # Termina intervista -> Valutazione
+        session.terminate_interview()
         if 'chat_session' in st.session_state:
             del st.session_state['chat_session']
         st.rerun()
@@ -254,68 +291,75 @@ def handle_interview():
 
 def handle_evaluation():
     """
-    Gestisce la fase di valutazione finale.
-    
-    Implementa RF_6, RF_7.
+    Fase 4: Valutazione Finale.
+    Implementa RF_6 (Form) e RF_7 (Confronto).
     """
+    session = st.session_state.session
     current_item = st.session_state.current_item
-    ground_truth = st.session_state.session.ground_truth
     
-    # Renderizza il form e ottieni l'input
-    user_evaluation = render_evaluation_form(
+    # Renderizza il form appropriato (Griglia 30 item o Singolo)
+    user_input = render_evaluation_form(
         tald_items=st.session_state.tald_items,
         current_item=current_item,
-        conversation=st.session_state.conversation,
-        mode=ground_truth.mode
+        conversation=session.conversation,
+        mode=session.mode
     )
 
-    # Gestione navigazione (Back/Reset)
-    if user_evaluation == "RESET":
+    # --- Gestione Navigazione Uscita (Back/Reset) ---
+    if user_input == "RESET":
         reset_application()
         st.rerun()
-    elif user_evaluation == "BACK_TO_ITEMS":
-        st.session_state.session.phase = SessionPhase.ITEM_SELECTION
-        st.session_state.conversation.clear()  
+        
+    elif user_input == "BACK_TO_ITEMS":
+        # Reset parziale per tornare a scegliere un item (solo guidata)
+        session.phase = SessionPhase.ITEM_SELECTION
+        session.conversation.clear()  
         if 'chat_session' in st.session_state:  
             del st.session_state['chat_session']
-        if 'current_item' in st.session_state: 
-            del st.session_state['current_item']
+        
+        # Pulizia stati locali della valutazione
+        keys_to_clean = ['eval_submitting', 'exploratory_sheet', 'eval_notes']
+        for k in keys_to_clean:
+            if k in st.session_state: del st.session_state[k]
         st.rerun()
     
-    # Se abbiamo una valutazione valida, procediamo con la generazione report
-    elif user_evaluation:
+    # --- Gestione Conferma Valutazione ---
+    elif user_input:
+        # Se user_input è un oggetto UserEvaluation valido, procediamo
         try:
-            # 1. Confronto con ground truth
+            # 1. Confronto con ground truth (Vettoriale o Singolo)
             comparison_result = ComparisonEngine.compare(
-                user_evaluation=user_evaluation,
-                ground_truth=ground_truth
+                user_evaluation=user_input,
+                ground_truth=session.ground_truth
             )
             
             st.markdown("")
             
-            # 2. Generazione report con Status Bar animata
+            # 2. Generazione report con Status Bar
             with st.status("🧠 Analisi clinica in corso...", expanded=True) as status:
-                st.write("🔍 Analisi della conversazione...")
+                st.write("🔍 Elaborazione dati e confronto...")
                 time.sleep(0.8)
                 
-                st.write("🩺 Consultazione Paziente Virtuale (Gemini)...")
+                st.write("🩺 Generazione spiegazione clinica (Gemini)...")
                 
+                # Generazione report completo
                 report = st.session_state.report_generator.generate_report(
-                    ground_truth=ground_truth,
-                    user_evaluation=user_evaluation,
+                    ground_truth=session.ground_truth,
+                    user_evaluation=user_input,
                     result=comparison_result,
-                    conversation=st.session_state.conversation,
-                    tald_item=current_item
+                    conversation=session.conversation,
+                    tald_item=current_item,
+                    all_items=st.session_state.tald_items
                 )
 
-                st.write("📄 Formattazione report finale...")
+                st.write("📄 Finalizzazione documento...")
                 time.sleep(0.6)
                 
                 status.update(label="✅ Report generato con successo!", state="complete", expanded=False)
                 time.sleep(0.8)
             
-            # 3. Successo: Salva e procedi
-            st.session_state.session.submit_evaluation(user_evaluation, comparison_result)
+            # 3. Salvataggio stato e Transizione
+            session.submit_evaluation(user_input, comparison_result)
             st.session_state.report = report
             st.rerun()
 
@@ -398,18 +442,41 @@ def handle_report():
 def handle_feedback():
     """
     Gestisce la fase di feedback opzionale.
-    
+
     Implementa RF_10.
     """
     report = st.session_state.report
+
+    # --- LOGICA TITOLO INTELLIGENTE PER SIDEBAR ---
+    if report.ground_truth.is_guided_mode():
+        # Modalità Guidata: Abbiamo un ID e un Titolo precisi
+        primary_id = report.tald_item.id
+        item_title = report.tald_item.title
+    else:
+        # Modalità Esplorativa: Creiamo un titolo riepilogativo
+        primary_id = 0 # Non usato visivamente nella nuova sidebar esplorativa
+        active_count = len(report.ground_truth.active_items)
+        if active_count == 0:
+            item_title = "Paziente Sano (Asintomatico)"
+        elif active_count == 1:
+            # Se c'è un solo item, proviamo a recuperare il nome, altrimenti generico
+            first_id = next(iter(report.ground_truth.active_items))
+            # Cerchiamo il nome nella lista completa se disponibile
+            found = next((i for i in st.session_state.tald_items if i.id == first_id), None)
+            item_name = found.title if found else "Singolo Disturbo"
+            item_title = f"Profilo Singolo: {item_name}"
+        else:
+            item_title = f"Profilo Complesso ({active_count} disturbi attivi)"
     
+    # Rendering del form
     result = render_feedback_form(
-        item_id=report.tald_item.id,
-        item_title=report.tald_item.title,
+        item_id=primary_id,
+        item_title=item_title,
         mode=report.ground_truth.mode,
         score=report.result.score
     )
     
+    # Gestione navigazione 
     if result == True:
         # Utente ha cliccato "Nuova Simulazione"
         reset_application()
@@ -428,18 +495,22 @@ def handle_feedback():
 def reset_application():
     """
     Reset dell'applicazione per nuova simulazione.
-    
+
     Implementa RF_14: reset sessione.
-    
-    Pulisce session_state mantenendo solo configurazioni caricate.
     """
+    # 1. Resetta la logica interna della sessione (torna a SELECTION)
+    if 'session' in st.session_state:
+        st.session_state.session.reset()
+
+    # 2. Pulisce lo stato di Streamlit (variabili temporanee)
     keys_to_keep = [
         'initialized',
         'config',
         'tald_items',
         'llm_service',
         'conversation_manager',
-        'report_generator'
+        'report_generator',
+        'session' # Manteniamo l'oggetto wrapper
     ]
     
     keys_to_remove = [key for key in st.session_state.keys() 
@@ -447,10 +518,7 @@ def reset_application():
     
     for key in keys_to_remove:
         del st.session_state[key]
-    
-    st.session_state.session = SessionState()
-    st.session_state.conversation = ConversationHistory()
-
+        
 
 def render_error_page(error_message: str):
     """
@@ -466,8 +534,7 @@ def render_error_page(error_message: str):
     """)
     
     if st.button("🔄 Riavvia Applicazione"):
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
+        reset_application()
         st.rerun()
 
 
@@ -520,7 +587,9 @@ def main():
         render_error_page(f"Errore imprevisto: {str(e)}")
         
         with st.expander("🔧 Debug Info"):
-            st.write("Session State:", st.session_state.session.to_dict())
+            # Mostra lo stato della sessione solo se esiste
+            if 'session' in st.session_state:
+                st.write("Session State:", st.session_state.session.to_dict())
             st.exception(e)
 
 

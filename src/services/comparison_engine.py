@@ -1,18 +1,19 @@
 """
 ComparisonEngine - Servizio per confronto valutazioni
 
-Questo modulo confronta la valutazione dell'utente con il ground truth:
-- Verifica correttezza identificazione item (modalità esplorativa)
-- Verifica correttezza attribuzione grado
-- Calcola differenza numerica tra gradi
-- Assegna punteggio complessivo (0-100)
-- Genera feedback testuale
+Questo modulo confronta la valutazione dell'utente con il ground truth.
+In base alla modalità, esegue:
+- Confronto puntuale sul grado (Modalità Guidata)
+- Confronto vettoriale sull'intera scheda TALD (Modalità Esplorativa)
+
+Calcola le metriche di accuratezza (True Positives, False Positives, False Negatives)
+e assegna un punteggio percentuale (0-100) sulla performance diagnostica.
 
 Control del pattern Entity-Control-Boundary (vedi RAD sezione 2.6.1)
 Implementa RF_7 del RAD
 """
 
-from typing import Optional, Dict
+from typing import Dict, List
 from src.models.evaluation import UserEvaluation, GroundTruth, EvaluationResult
 
 
@@ -21,35 +22,22 @@ class ComparisonEngine:
     Service per confronto automatico tra valutazione utente e ground truth.
     
     Responsabilità:
-    - Confrontare valutazione utente con ground truth (RF_7)
-    - Determinare correttezza item identificato (modalità esplorativa)
-    - Determinare correttezza grado attribuito
-    - Calcolare punteggio performance (0-100)
-    - Generare messaggio feedback
+    - Analizzare la corrispondenza tra i disturbi rilevati e quelli reali (RF_7)
+    - Calcolare la matrice di confusione (TP, FP, FN) in modalità esplorativa
+    - Valutare la precisione dei gradi di severità assegnati
+    - Calcolare un punteggio normalizzato (0-100)
+    - Generare feedback testuali dettagliati per l'utente
     
     Come da RAD 2.6.1 - ComparisonEngine:
-    "Esegue il confronto automatico tra valutazione utente e ground truth.
-    Calcola la correttezza dell'identificazione dell'item (solo modalità
-    esplorativa), la correttezza del grado attribuito, la differenza
-    numerica tra grado osservato e grado effettivo e un punteggio
-    complessivo di performance dell'esercitazione."
-    
-    Example:
-        >>> result = ComparisonEngine.compare(user_eval, ground_truth)
-        >>> print(f"Score: {result.score}/100")
-        >>> print(f"Item corretto: {result.item_correct}")
-        >>> print(f"Grado corretto: {result.grade_correct}")
+    "Esegue il confronto vettoriale tra la scheda di valutazione compilata
+    dall'utente (30 valori) e il ground truth. Calcola la matrice di confusione
+    per identificare disturbi correttamente diagnosticati, omessi e sovrastimati."
     """
     
-    # Pesi per il calcolo del punteggio 
-    SCORE_ITEM_CORRECT = 50      # 50 punti per item corretto (esplorativa)
-    SCORE_GRADE_EXACT = 50       # 50 punti per grado esatto
-    SCORE_GRADE_CLOSE = 25       # 25 punti per grado vicino (±1)
-
-    # Limiti e parametri
+    # Costanti per il calcolo del punteggio
     MAX_GRADE = 4
     MIN_GRADE = 0
-    MAX_FEEDBACK_LENGTH = 2000
+    MAX_FEEDBACK_LENGTH = 3000
 
     @staticmethod
     def compare(
@@ -57,266 +45,244 @@ class ComparisonEngine:
         ground_truth: GroundTruth
     ) -> EvaluationResult:
         """
-        Confronta la valutazione utente con il ground truth.
-        
-        Implementa RF_7: confronto automatico con ground truth.
+        Esegue il confronto tra valutazione e verità clinica.
+        Dispatcha la logica corretta in base alla modalità della sessione.
         
         Args:
-            user_evaluation (UserEvaluation): Valutazione fornita dall'utente
-            ground_truth (GroundTruth): Ground truth della simulazione
+            user_evaluation (UserEvaluation): Input dell'utente.
+            ground_truth (GroundTruth): Configurazione della simulazione.
             
         Returns:
-            EvaluationResult: Risultato del confronto con punteggio
-            
-        Example:
-            >>> # Modalità guidata
-            >>> user_eval = UserEvaluation(grade=3, item_id=None)
-            >>> gt = GroundTruth(item_id=1, item_title="Circumstantiality", grade=2, mode="guided")
-            >>> result = ComparisonEngine.compare(user_eval, gt)
-            >>> print(result.grade_correct)  # False (3 vs 2)
-            >>> print(result.score)  # 25 (grado vicino di 1)
+            EvaluationResult: Oggetto contenente metriche, punteggi e feedback.
         """
-        # Validazioni basiche per robustezza
-        if not (ComparisonEngine.MIN_GRADE <= user_evaluation.grade <= ComparisonEngine.MAX_GRADE):
-            raise ValueError(f"User grade fuori range: {user_evaluation.grade}")
-        if not (ComparisonEngine.MIN_GRADE <= ground_truth.grade <= ComparisonEngine.MAX_GRADE):
-            raise ValueError(f"Ground truth grade fuori range: {ground_truth.grade}")
+        if ground_truth.is_guided_mode():
+            return ComparisonEngine._compare_guided(user_evaluation, ground_truth)
+        else:
+            return ComparisonEngine._compare_exploratory(user_evaluation, ground_truth)
 
-        # 1. Verifica correttezza item (solo modalità esplorativa)
-        item_correct: Optional[bool] = None
-        if ground_truth.is_exploratory_mode():
-            # Se user_evaluation.item_id è None, è automaticamente incorretto
-            item_correct = (user_evaluation.item_id == ground_truth.item_id)
+    # =========================================================================
+    # LOGICA MODALITÀ GUIDATA (1 vs 1)
+    # =========================================================================
 
-        # 2. Verifica correttezza grado
-        grade_correct: bool = (user_evaluation.grade == ground_truth.grade)
-
-        # 3. Calcola differenza grado
-        grade_difference: int = abs(user_evaluation.grade - ground_truth.grade)
-
-        # 4. Calcola punteggio
-        score: int = ComparisonEngine._calculate_score(
-            item_correct=item_correct,
-            grade_correct=grade_correct,
-            grade_difference=grade_difference,
-            mode=ground_truth.mode
-        )
-
-        # 5. Genera messaggio feedback
-        feedback_message: str = ComparisonEngine._generate_feedback_message(
-            item_correct=item_correct,
-            grade_correct=grade_correct,
-            grade_difference=grade_difference,
-            user_grade=user_evaluation.grade,
-            ground_truth_grade=ground_truth.grade,
-            mode=ground_truth.mode
-        )
-
-        # 6. Troncamento feedback se troppo lungo (protezione per UI/PDF)
-        if len(feedback_message) > ComparisonEngine.MAX_FEEDBACK_LENGTH:
-            feedback_message = feedback_message[:ComparisonEngine.MAX_FEEDBACK_LENGTH]
-
-        # 7. Crea oggetto EvaluationResult
-        return EvaluationResult(
-            item_correct=item_correct,
-            grade_correct=grade_correct,
-            grade_difference=grade_difference,
-            score=score,
-            feedback_message=feedback_message
-        )
-    
     @staticmethod
-    def _calculate_score(
-        item_correct: Optional[bool],
-        grade_correct: bool,
-        grade_difference: int,
-        mode: str
+    def _compare_guided(user_eval: UserEvaluation, gt: GroundTruth) -> EvaluationResult:
+        """
+        Confronto semplificato per la modalità guidata.
+        Si concentra sulla correttezza del grado per l'unico item oggetto di studio.
+        """
+        # Identifica l'item target (l'unico attivo nel GT in modalità guidata)
+        target_item_id, gt_grade = gt.get_primary_item()
+        
+        # Recupera il voto dell'utente per quell'item
+        user_grade = user_eval.get_grade_for_item(target_item_id)
+        
+        # Calcolo differenza
+        grade_diff = abs(user_grade - gt_grade)
+        grade_correct = (grade_diff == 0)
+        
+        # Scoring Guidato: 
+        # 100 punti = esatto
+        # 50 punti = errore di 1 grado (accettabile in training)
+        # 0 punti = errore > 1
+        score = 0
+        if grade_correct:
+            score = 100
+        elif grade_diff == 1:
+            score = 50
+        
+        # Generazione Feedback
+        feedback = ComparisonEngine._generate_guided_feedback(
+            gt_grade, user_grade, grade_diff
+        )
+        
+        return EvaluationResult(
+            true_positives=[target_item_id] if grade_correct else [],
+            grade_diffs={target_item_id: grade_diff},
+            score=score,
+            feedback_message=feedback
+        )
+
+    # =========================================================================
+    # LOGICA MODALITÀ ESPLORATIVA (N vs M - Vettoriale)
+    # =========================================================================
+
+    @staticmethod
+    def _compare_exploratory(user_eval: UserEvaluation, gt: GroundTruth) -> EvaluationResult:
+        """
+        Confronto vettoriale completo per la modalità esplorativa (Assessment).
+        Gestisce casi di comorbilità (più item) e paziente sano (0 item).
+        
+        Algoritmo:
+        1. Estrae i set di item rilevati (User) vs reali (GT) con grado > 0.
+        2. Calcola intersezioni e differenze (TP, FP, FN).
+        3. Per i True Positives, calcola la precisione del grado.
+        4. Compone un punteggio ponderato (50% Identificazione, 50% Precisione Grado).
+        """
+        
+        # 1. Estrazione Item Attivi (Grado > 0)
+        # GT: Quali disturbi ha VERAMENTE il paziente?
+        gt_active_ids = {i_id for i_id, gr in gt.active_items.items() if gr > 0}
+        
+        # USER: Quali disturbi ha SEGNALATO l'utente?
+        user_active_ids = {i_id for i_id, gr in user_eval.evaluation_sheet.items() if gr > 0}
+        
+        # 2. Calcolo Matrice di Confusione (Set Operations)
+        true_positives = list(gt_active_ids.intersection(user_active_ids))  # Corretti
+        false_positives = list(user_active_ids - gt_active_ids)             # Inventati (Allucinazioni)
+        false_negatives = list(gt_active_ids - user_active_ids)             # Persi (Omissioni)
+        
+        # 3. Analisi Differenze Gradi (Solo per i True Positives)
+        grade_diffs = {}
+        total_grade_penalty = 0
+        
+        for item_id in true_positives:
+            u_g = user_eval.get_grade_for_item(item_id)
+            g_g = gt.active_items.get(item_id, 0)
+            diff = abs(u_g - g_g)
+            grade_diffs[item_id] = diff
+            
+            # Penalità: diff 0 -> 0, diff 1 -> 0.5, diff >=2 -> 1.0 (max penalty)
+            if diff == 1:
+                total_grade_penalty += 0.5
+            elif diff >= 2:
+                total_grade_penalty += 1.0
+
+        # 4. Calcolo Punteggio 
+        score = ComparisonEngine._calculate_exploratory_score(
+            tp_count=len(true_positives),
+            fp_count=len(false_positives),
+            fn_count=len(false_negatives),
+            gt_count=len(gt_active_ids),
+            grade_penalty=total_grade_penalty
+        )
+        
+        # 5. Generazione Feedback Testuale
+        feedback = ComparisonEngine._generate_exploratory_feedback(
+            true_positives, false_positives, false_negatives, 
+            grade_diffs, gt, user_eval
+        )
+        
+        return EvaluationResult(
+            true_positives=sorted(true_positives),
+            false_positives=sorted(false_positives),
+            false_negatives=sorted(false_negatives),
+            grade_diffs=grade_diffs,
+            score=score,
+            feedback_message=feedback
+        )
+
+    @staticmethod
+    def _calculate_exploratory_score(
+        tp_count: int, fp_count: int, fn_count: int, 
+        gt_count: int, grade_penalty: float
     ) -> int:
         """
-        Calcola il punteggio complessivo (0-100).
+        Calcola il punteggio 0-100 per la modalità esplorativa usando un sistema a penalità.
         
-        Sistema di punteggio:
-        - Modalità guidata: 100 punti totali per il grado
-          * Grado esatto: 100 punti
-          * Grado ±1: 50 punti
-          * Grado ±2+: 0 punti
+        Logica Didattica:
+        - Si parte da 100 (Credito pieno).
+        - Si sottraggono punti per ogni errore commesso.
+        - Questo approccio è più equo per i casi "Paziente Sano" e più comprensibile.
         
-        - Modalità esplorativa: 50 punti item + 50 punti grado
-          * Item corretto: 50 punti
-          * Item errato: 0 punti
-          * Grado esatto: +50 punti
-          * Grado ±1: +25 punti
-          * Grado ±2+: +0 punti
-        
-        Args:
-            item_correct (bool|None): True se item corretto (None in guidata)
-            grade_correct (bool): True se grado corretto
-            grade_difference (int): Differenza assoluta tra gradi
-            mode (str): "guided" o "exploratory"
-            
-        Returns:
-            int: Punteggio 0-100
+        Pesi Penalità:
+        - FN (Omissione): -15 punti (Grave: non vedere un sintomo).
+        - FP (Falso Positivo): -10 punti (Medio: inventare un sintomo).
+        - Errore Grado: gestito tramite grade_penalty (che accumula 0.5 per lievi, 1.0 per gravi).
+          Qui convertiamo quel valore in punti reali (es. 1.0 penalty = -5 punti).
         """
-        score = 0
         
-        if mode == "guided":
-            # Modalità guidata: solo grado conta
-            if grade_correct:
-                score = 100
-            elif grade_difference == 1:
-                score = 50
-            else:  # differenza >= 2
-                score = 0
-        else:  # exploratory
-            # Punteggio item (50 punti)
-            if item_correct:
-                score += ComparisonEngine.SCORE_ITEM_CORRECT
+        current_score = 100.0
+        
+        # 1. Penalità per Errori di Identificazione
+        PENALTY_OMISSION = 15.0  # Mancato
+        PENALTY_FALSE_ALARM = 10.0 # Inventato
+        
+        current_score -= (fn_count * PENALTY_OMISSION)
+        current_score -= (fp_count * PENALTY_FALSE_ALARM)
+        
+        # 2. Penalità per Precisione Grado (sui True Positives)
+        # grade_penalty arriva dal metodo chiamante con valori:
+        # 0.5 per diff=1, 1.0 per diff>=2
+        # Moltiplichiamo per un fattore scalare per convertirlo in punti voto.
+        # Es: diff=1 (0.5) -> -2.5 punti | diff=2 (1.0) -> -5 punti
+        SCORE_SCALING_FACTOR = 5.0 
+        
+        current_score -= (grade_penalty * SCORE_SCALING_FACTOR)
+        
+        # 3. Normalizzazione (0-100)
+        final_score = int(max(0, min(100, current_score)))
+        
+        return final_score
 
-            # Punteggio grado (50 punti)
-            if grade_correct:
-                score += ComparisonEngine.SCORE_GRADE_EXACT
-            elif grade_difference == 1:
-                score += ComparisonEngine.SCORE_GRADE_CLOSE
-            # Se differenza >= 2, nessun punto per il grado
-        
-        # Garantire 0 <= score <= 100
-        return max(0, min(100, int(score)))
-    
+    # =========================================================================
+    # GENERAZIONE FEEDBACK TESTUALI
+    # =========================================================================
+
     @staticmethod
-    def _generate_feedback_message(
-        item_correct: Optional[bool],
-        grade_correct: bool,
-        grade_difference: int,
-        user_grade: int,
-        ground_truth_grade: int,
-        mode: str
+    def _generate_guided_feedback(gt_grade: int, user_grade: int, diff: int) -> str:
+        """Genera il testo per la modalità guidata."""
+        if diff == 0:
+            return f"✅ Eccellente. Hai individuato correttamente il grado di severità ({gt_grade}/4)."
+        elif diff == 1:
+            direction = "sottostimato" if user_grade < gt_grade else "sovrastimato"
+            return (f"⚠️ Buona approssimazione. Hai leggermente {direction} il disturbo "
+                    f"(Tuo: {user_grade}, Reale: {gt_grade}). La differenza è minima.")
+        else:
+            direction = "sottostimato" if user_grade < gt_grade else "sovrastimato"
+            return (f"❌ Errore significativo. Hai {direction} marcatamente la severità "
+                    f"(Tuo: {user_grade}, Reale: {gt_grade}). Rivedi i criteri diagnostici.")
+
+    @staticmethod
+    def _generate_exploratory_feedback(
+        tp: List[int], fp: List[int], fn: List[int], 
+        diffs: Dict[int, int], gt: GroundTruth, user: UserEvaluation
     ) -> str:
-        """
-        Genera un messaggio di feedback testuale per l'utente.
+        """Genera il testo dettagliato per la modalità esplorativa."""
+        blocks = []
         
-        Args:
-            item_correct (bool|None): Correttezza item
-            grade_correct (bool): Correttezza grado
-            grade_difference (int): Differenza gradi
-            user_grade (int): Grado attribuito dall'utente
-            ground_truth_grade (int): Grado effettivo
-            mode (str): "guided" o "exploratory"
-            
-        Returns:
-            str: Messaggio feedback formattato
-        """
-        messages = []
-        
-        # Feedback item (solo modalità esplorativa)
-        if mode == "exploratory":
-            if item_correct:
-                messages.append("Hai identificato correttamente l'item TALD.")
-            else:
-                # se item_correct è None (improbabile in exploratory), segnaliamo genericamente
-                messages.append("L'item identificato non è corretto.")
-        
-        # Feedback grado
-        if grade_correct:
-            messages.append(f"Hai attribuito il grado corretto ({ground_truth_grade}/4).")
+        # 1. Analisi Identificazione
+        if not fp and not fn and tp:
+            blocks.append("✅ **Diagnosi Perfetta:** Hai identificato esattamente tutti i disturbi presenti.")
+        elif not fp and not fn and not tp:
+            # Caso paziente sano corretto
+            blocks.append("✅ **Diagnosi Perfetta:** Hai correttamente rilevato l'assenza di disturbi (Paziente Sano).")
         else:
-            if grade_difference == 1:
-                if user_grade > ground_truth_grade:
-                    messages.append(
-                        f"Il grado è leggermente sovrastimato: hai attribuito {user_grade}/4, "
-                        f"il grado corretto era {ground_truth_grade}/4 (differenza: 1 punto)."
-                    )
+            # Errori misti
+            if tp:
+                blocks.append(f"✅ Hai individuato correttamente {len(tp)} disturbo/i.")
+            if fn:
+                blocks.append(f"❌ **Omissioni:** Hai mancato {len(fn)} disturbo/i presenti nel quadro clinico.")
+            if fp:
+                blocks.append(f"⚠️ **Falsi Positivi:** Hai segnalato {len(fp)} disturbo/i non presenti nel ground truth.")
+
+        blocks.append("\n") 
+
+        # 2. Dettaglio Gradi (solo per TP)
+        if tp:
+            blocks.append("**Analisi della severità (Gradi):**")
+            for item_id in tp:
+                u_g = user.get_grade_for_item(item_id)
+                g_g = gt.active_items[item_id]
+                d = diffs[item_id]
+                
+                # Lavoriamo con gli ID per disaccoppiamento.
+                if d == 0:
+                    blocks.append(f"- Item {item_id}: Grado corretto ({u_g}/4).")
+                elif d == 1:
+                    blocks.append(f"- Item {item_id}: Impreciso (Tuo: {u_g}, Reale: {g_g}).")
                 else:
-                    messages.append(
-                        f"Il grado è leggermente sottostimato: hai attribuito {user_grade}/4, "
-                        f"il grado corretto era {ground_truth_grade}/4 (differenza: 1 punto)."
-                    )
-            else:  # differenza >= 2
-                if user_grade > ground_truth_grade:
-                    messages.append(
-                        f"Il grado è significativamente sovrastimato: hai attribuito {user_grade}/4, "
-                        f"il grado corretto era {ground_truth_grade}/4 (differenza: {grade_difference} punti)."
-                    )
-                else:
-                    messages.append(
-                        f"Il grado è significativamente sottostimato: hai attribuito {user_grade}/4, "
-                        f"il grado corretto era {ground_truth_grade}/4 (differenza: {grade_difference} punti)."
-                    )
-        
-        return " ".join(messages)
-    
-    @staticmethod
-    def get_performance_category(score: int) -> str:
-        """
-        Determina la categoria di performance basata sul punteggio.
-        
-        Args:
-            score (int): Punteggio 0-100
-            
-        Returns:
-            str: Categoria ("Eccellente", "Buono", "Sufficiente", "Insufficiente")
-        """
-        if score >= 90:
-            return "Eccellente"
-        elif score >= 75:
-            return "Buono"
-        elif score >= 60:
-            return "Sufficiente"
-        else:
-            return "Insufficiente"
-    
-    @staticmethod
-    def is_passing_evaluation(score: int, threshold: int = 60) -> bool:
-        """
-        Verifica se la valutazione raggiunge la soglia di sufficienza.
-        
-        Args:
-            score (int): Punteggio 0-100
-            threshold (int): Soglia minima (default: 60)
-            
-        Returns:
-            bool: True se score >= threshold
-        """
-        return score >= threshold
-    
-    @staticmethod
-    def get_detailed_analysis(
-        user_evaluation: UserEvaluation,
-        ground_truth: GroundTruth,
-        result: EvaluationResult
-    ) -> Dict:
-        """
-        Genera un'analisi dettagliata del confronto.
-        
-        Utile per debugging e per statistiche avanzate.
-        
-        Args:
-            user_evaluation (UserEvaluation): Valutazione utente
-            ground_truth (GroundTruth): Ground truth
-            result (EvaluationResult): Risultato confronto
-            
-        Returns:
-            dict: Analisi dettagliata con statistiche
-        """
-        analysis = {
-            "mode": ground_truth.mode,
-            "ground_truth": {
-                "item_id": ground_truth.item_id,
-                "item_title": ground_truth.item_title,
-                "grade": ground_truth.grade
-            },
-            "user_evaluation": {
-                "item_id": user_evaluation.item_id,
-                "grade": user_evaluation.grade,
-                "has_notes": bool(user_evaluation.notes and user_evaluation.notes.strip())
-            },
-            "comparison": {
-                "item_correct": result.item_correct,
-                "grade_correct": result.grade_correct,
-                "grade_difference": result.grade_difference,
-                "score": result.score,
-                "performance_category": ComparisonEngine.get_performance_category(result.score),
-                "is_passing": ComparisonEngine.is_passing_evaluation(result.score)
-            }
-        }
-        
-        return analysis
+                    blocks.append(f"- Item {item_id}: Errato (Tuo: {u_g}, Reale: {g_g}).")
+
+        # 3. Dettaglio Errori (se presenti)
+        if fn or fp:
+            blocks.append("\n**Dettaglio Discrepanze:**")
+            if fn:
+                for iid in fn:
+                    g_g = gt.active_items[iid]
+                    blocks.append(f"- Item {iid} era PRESENTE (Grado {g_g}) ma non l'hai segnalato.")
+            if fp:
+                for iid in fp:
+                    u_g = user.get_grade_for_item(iid)
+                    blocks.append(f"- Item {iid} era ASSENTE (Grado 0) ma hai assegnato Grado {u_g}.")
+
+        return "\n".join(blocks)

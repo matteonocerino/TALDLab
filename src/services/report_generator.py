@@ -17,8 +17,9 @@ Implementa RF_8, RF_9 del RAD
 
 import os
 import re
+import html
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List, Dict
 from io import BytesIO 
 
 # ReportLab imports per generazione PDF reale
@@ -27,7 +28,7 @@ from reportlab.lib import colors
 from reportlab.lib.units import cm
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, KeepTogether
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, KeepTogether, Flowable
 
 from src.models.evaluation import UserEvaluation, GroundTruth, EvaluationResult
 from src.models.conversation import ConversationHistory
@@ -71,6 +72,26 @@ class Report:
         self.timestamp = timestamp or datetime.now()
 
 
+class NoSpaceAtTop(Flowable):
+    """
+    Wrapper per Flowable che rimuove lo spazio superiore se l'elemento è in cima alla pagina.
+    Utile per evitare spazi vuoti indesiderati nei blocchi KeepTogether.
+    """
+    def __init__(self, element):
+        Flowable.__init__(self)
+        self.element = element
+
+    def wrap(self, availWidth, availHeight):
+        # Propaga la dimensione corretta
+        return self.element.wrap(availWidth, availHeight)
+
+    def draw(self):
+        # Non usare drawOn() — lascia gestire coordinate al frame
+        self.element.canv = self.canv
+        self.element.draw()
+
+
+
 class ReportGenerator:
     """
     Service per la gestione della logica di reporting.
@@ -95,7 +116,8 @@ class ReportGenerator:
         user_evaluation: UserEvaluation,
         result: EvaluationResult,
         conversation: ConversationHistory,
-        tald_item: TALDItem
+        tald_item: Optional[TALDItem] = None,
+        all_items: List[TALDItem] = None
     ) -> Report:
         """
         Genera l'oggetto Report completo.
@@ -118,13 +140,26 @@ class ReportGenerator:
         Returns:
             Report: L'oggetto report popolato.
         """
+
+        # Recupera il grado principale per il prompt (utile in modalità guidata)
+        # In esplorativa usiamo 0 come default se tald_item è None
+        current_grade = 0
+        if tald_item:
+            current_grade = ground_truth.active_items.get(tald_item.id, 0)
+
+        # Preparazione lista item per LLM (gestione sicurezza)
+        # Se all_items non viene passato, creiamo una lista minima con l'item corrente
+        items_for_llm = all_items if all_items else []
+        if not items_for_llm and tald_item:
+            items_for_llm = [tald_item]    
+
         # 1. Generazione spiegazione clinica (con gestione Fallback)
         try:
             # Tentativo principale: Analisi AI tramite Gemini
             clinical_explanation = self.llm_service.generate_clinical_explanation(
-                tald_item=tald_item,
-                conversation_history=conversation,
-                grade=ground_truth.grade
+                ground_truth=ground_truth,      
+                all_tald_items=items_for_llm,   
+                conversation_history=conversation
             )
 
         except (LLMTimeoutError, LLMConnectionError):
@@ -135,7 +170,7 @@ class ReportGenerator:
         except Exception:
             # Solo per altri errori imprevisti (es. bug di parsing interno),
             # usiamo il fallback statico per non far crashare tutto.
-            clinical_explanation = self._generate_basic_explanation(tald_item, ground_truth.grade)
+            clinical_explanation = self._generate_basic_explanation(tald_item, current_grade)
         
         # 2. Calcolo metriche conversazione
         conversation_summary = {
@@ -171,9 +206,12 @@ class ReportGenerator:
         Returns:
             str: Testo formattato con descrizione e criteri.
         """
-        grade_desc = tald_item.get_grade_description(grade)
+        if not tald_item:
+            return "**Errore:** Impossibile generare spiegazione (Item non identificato e AI non disponibile)."
+
+        grade_desc = tald_item.get_grade_description(grade) if tald_item else "N/A"
         
-        explanation = f"""**Nota:** Questa è una spiegazione generata dai dati statici (LLM non disponibile al momento).
+        return f"""**Nota:** Questa è una spiegazione generata dai dati statici (LLM non disponibile al momento).
 
 **Item TALD simulato:** {tald_item.title}
 
@@ -188,81 +226,131 @@ class ReportGenerator:
 **Esempio tipico:**
 {tald_item.example}
 """
-        return explanation
     
-    def _clean_markdown_for_pdf(self, text: str) -> str:
-        """
-        Converte il Markdown base (**, ##, *) in tag XML compatibili con ReportLab.
-        """
-        if not text: return ""
+    def _create_clinical_flowables(self, text: str, styles: Dict) -> List:
+        if not text:
+            return []
 
-        # 1. Rimuovi eventuali titoli Markdown (## Titolo) e falli diventare grassetto + a capo
-        # Sostituisce "## Titolo" con "<b>Titolo</b><br/>"
-        text = re.sub(r'#{2,}\s*(.*?)(?:\n|$)', r'<b>\1</b><br/>', text)
-
-        # 2. Converti grassetto: **Testo** -> <b>Testo</b>
-        text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
-
-        # 3. Converti corsivo: *Testo* -> <i>Testo</i>
-        text = re.sub(r'\*(.*?)\*', r'<i>\1</i>', text)
-
-        # 4. Gestione elenchi puntati (simulati con <br/> e bullet char)
-        text = text.replace('\n- ', '<br/>• ')
-        
-        # 5. Gestione a capo standard
-        text = text.replace('\n', '<br/>')
-
-        return text
-    
-    def _parse_ai_response_to_flowables(self, text: str, style_normal, style_title) -> list:
-        """
-        Spezza il testo dell'AI in paragrafi distinti per gestire correttamente
-        i salti pagina. Riconosce i titoli e applica keepWithNext.
-        """
         flowables = []
-        if not text: return flowables
-        
-        # 1. Normalizziamo e dividiamo per righe
-        text = text.replace('\r\n', '\n')
+        text = text.replace('\r\n', '\n').replace('\r', '\n')
         lines = text.split('\n')
+
+        # --- DEFINIZIONE STILI ---
+        # Stile H3 (Titolo Sezione)
+        style_h3 = ParagraphStyle(
+            'ClinicalH3', parent=styles['Heading3'], fontSize=12,
+            textColor=colors.HexColor('#2c3e50'), spaceBefore=12, spaceAfter=6,
+            keepWithNext=True
+        )
+
+        # Stile Livello 1 (* Categoria): Grassetto, indentato poco
+        style_l1 = ParagraphStyle(
+            'BulletLvl1', parent=styles['Normal'], fontSize=10, leading=14,
+            leftIndent=30, bulletIndent=10, firstLineIndent=0, 
+            spaceAfter=2, alignment=TA_JUSTIFY,
+            fontName='Helvetica-Bold'
+        )
+
+        # Stile Livello 2 (- Dettaglio): Normale, indentato molto
+        style_l2 = ParagraphStyle(
+            'BulletLvl2', parent=styles['Normal'], fontSize=10, leading=14,
+            leftIndent=55, bulletIndent=35, firstLineIndent=0, 
+            spaceAfter=4, alignment=TA_JUSTIFY
+        )
+
+        style_normal = styles['TALDNormal']
         
-        # Flag per saltare il primissimo titolo se ridondante
-        first_line_processed = False
+        # Variabili di stato per il raggruppamento (KeepTogether)
+        pending_h3 = None
+        pending_l1 = None
 
         for line in lines:
             line = line.strip()
             if not line: continue
-            
-            # Se è la prima riga significativa E sembra un titolo ripetuto, lo saltiamo.
-            if not first_line_processed:
-                # Regex che cerca "Analisi", "Report", "Clinica" all'inizio
-                if re.match(r'^(#|\*| )*(Analisi|Report|Colloquio|Disturbo)', line, re.IGNORECASE):
-                    first_line_processed = True
-                    continue # SALTA QUESTA RIGA (non la scrive nel PDF)
-                first_line_processed = True
-            
-            # 2. Rileviamo se è un sottotitolo
-            # Criteri: inizia con ** o ## o numeri puntati grassettati (es. "1. **...")
-            is_title = False
-            if line.startswith('##') or line.startswith('**') or (len(line) > 0 and line[0].isdigit() and '**' in line[:10]):
-                is_title = True
-            
-            # 3. Pulizia Markdown (usiamo logica simile a clean_markdown)
-            clean_text = line
-            clean_text = re.sub(r'^#{2,}\s*', '', clean_text) # Via i ##
-            clean_text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', clean_text) # Grassetto
-            clean_text = re.sub(r'\*(.*?)\*', r'<i>\1</i>', clean_text) # Corsivo
-            
-            # 4. Creazione Oggetto
-            if is_title:
-                # TITOLO: Usa lo stile apposito che ha keepWithNext=True
-                flowables.append(Paragraph(clean_text, style_title))
-            else:
-                # TESTO: Stile normale
-                flowables.append(Paragraph(clean_text, style_normal))
-                # Aggiungiamo un piccolo spazio dopo ogni paragrafo di testo
-                flowables.append(Spacer(1, 0.2*cm))
+
+            # --- 1. RILEVAMENTO TITOLO (###) ---
+            if line.startswith('#') or (len(line) > 0 and line[0].isdigit() and '. ' in line[:5]):
+                # Se c'erano elementi in sospeso, chiudiamoli
+                if pending_l1:
+                    group = [pending_l1]
+                    if pending_h3: group.insert(0, pending_h3)
+                    flowables.append(KeepTogether(group))
+                elif pending_h3:
+                    flowables.append(KeepTogether([pending_h3]))
+
+                clean = re.sub(r'^[\#\d\.]+\s*', '', line).replace('*', '')
+                prefix = line.split(' ')[0] if line[0].isdigit() else "" 
+                clean = f"{prefix} {clean}".strip()
+                clean = html.escape(clean)
                 
+                pending_h3 = Paragraph(f"<b>{clean}</b>", style_h3)
+                pending_l1 = None # Reset L1
+                continue
+
+            # --- 2. RILEVAMENTO CATEGORIA (* ) ---
+            if line.startswith('* '):
+                # Se c'era un L1 precedente senza figli, chiudiamolo
+                if pending_l1:
+                    group = [pending_l1]
+                    if pending_h3: 
+                        group.insert(0, pending_h3)
+                        pending_h3 = None # Il titolo è stato usato
+                    flowables.append(KeepTogether(group))
+
+                clean = re.sub(r'^\*\s+', '', line)
+                clean = html.escape(clean)
+                # Creiamo il paragrafo L1 e lo teniamo in sospeso
+                pending_l1 = Paragraph(f'<bullet>&bull;</bullet>{clean}', style_l1)
+                continue
+
+            # --- 3. RILEVAMENTO DETTAGLIO (- ) ---
+            if line.startswith('- '):
+                clean = re.sub(r'^\-\s+', '', line)
+                clean = html.escape(clean)
+                clean = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', clean)
+                p = Paragraph(f'<bullet>-</bullet>{clean}', style_l2)
+
+                if pending_l1:
+                    # QUESTO È IL PUNTO CHIAVE:
+                    # Abbiamo un L1 in attesa (e forse un H3). Questo è il PRIMO figlio.
+                    # Li leghiamo tutti insieme in un blocco indivisibile.
+                    group = [pending_l1, p]
+                    if pending_h3:
+                        group.insert(0, pending_h3)
+                        pending_h3 = None # Titolo consumato
+                    
+                    flowables.append(KeepTogether(group))
+                    pending_l1 = None # L1 consumato (già incollato al primo figlio)
+                else:
+                    # Sono figli successivi (2°, 3° bullet point)
+                    # Li aggiungiamo come elementi singoli (così se serve vanno a capo pagina)
+                    flowables.append(KeepTogether([p]))
+                continue
+
+            # --- 4. TESTO NORMALE (Fallback) ---
+            clean = html.escape(line)
+            p = Paragraph(clean, style_normal)
+            
+            # Se c'era roba in sospeso, la incolliamo a questo testo
+            if pending_l1:
+                group = [pending_l1, p]
+                if pending_h3: group.insert(0, pending_h3); pending_h3=None
+                flowables.append(KeepTogether(group))
+                pending_l1 = None
+            elif pending_h3:
+                flowables.append(KeepTogether([pending_h3, p]))
+                pending_h3 = None
+            else:
+                flowables.append(p)
+
+        # Pulizia finale (se l'ultimo elemento era un titolo o categoria senza figli)
+        if pending_l1:
+            group = [pending_l1]
+            if pending_h3: group.insert(0, pending_h3)
+            flowables.append(KeepTogether(group))
+        elif pending_h3:
+            flowables.append(KeepTogether([pending_h3]))
+
         return flowables
     
     def export_pdf_to_bytes(self, report: Report, all_items: list[TALDItem] = None) -> BytesIO:
@@ -283,315 +371,380 @@ class ReportGenerator:
         """
         buffer = BytesIO()
         
-        # Setup Documento PDF (Margini A4 standard)
+        # Setup Documento
         doc = SimpleDocTemplate(
             buffer,
             pagesize=A4,
             rightMargin=2*cm, leftMargin=2*cm,
-            topMargin=2*cm, bottomMargin=2*cm,
+            topMargin=1.5*cm, bottomMargin=1.5*cm,
             title="TALDLab Report"
         )
         
-        # --- Definizione Stili (ReportLab Styles) ---
         styles = getSampleStyleSheet()
-        
-        # Stile Titolo Principale
-        style_title = ParagraphStyle(
-            'TALDTitle', 
-            parent=styles['Heading1'], 
-            alignment=TA_LEFT, 
-            fontSize=22, 
-            textColor=colors.HexColor('#2c3e50'),
-            spaceAfter=2,
-            leading=28 # Aumentato per spaziare
-        )
-        
-        # Stile Sottotitolo
-        style_subtitle = ParagraphStyle(
-            'TALDSub', 
-            parent=styles['Normal'], 
-            alignment=TA_LEFT, 
-            fontSize=13, 
-            textColor=colors.HexColor('#7f8c8d'),
-            spaceAfter=6,
-            leading=16 # Aumentato per spaziare
-        )
-        
-        # Stile Data
-        style_date = ParagraphStyle(
-            'TALDDate',
-            parent=styles['Normal'],
-            alignment=TA_LEFT,
-            fontSize=10,
-            textColor=colors.black,
-            leading=12
-        )
+        story = []
 
-        # Stile Intestazioni Sezioni (H2) con sfondo grigio chiaro
-        style_h2 = ParagraphStyle(
-            'TALDH2', 
-            parent=styles['Heading2'], 
-            fontSize=14, 
-            spaceBefore=12, 
-            spaceAfter=6,
-            textColor=colors.HexColor('#34495e'),
-            borderPadding=5,
-            borderColor=colors.HexColor('#ecf0f1'),
-            borderWidth=0,
-            backColor=colors.HexColor('#f8f9fa'),
-            keepWithNext=True  # IMPORTANTE: Evita titoli orfani a fine pagina
-        )
+        # --- DEFINIZIONE STILI ---
+        # Stili base personalizzati
+        style_normal = ParagraphStyle('TALDNormal', parent=styles['Normal'], fontSize=10, leading=14, alignment=TA_JUSTIFY, spaceAfter=6)
+        styles.add(style_normal) # Lo registriamo per usarlo nell'helper
 
-        # Definizione stile per i Sottotitoli (H3)
-        style_h3 = ParagraphStyle(
-            'TALDH3',
-            parent=styles['Heading3'],
-            fontSize=11,
-            textColor=colors.HexColor('#2c3e50'),
-            spaceBefore=6,
-            spaceAfter=2,      # Poco spazio dopo, per stare vicino al testo
-            keepWithNext=True  # Non si stacca mai dal prossimo paragrafo
-        )
-        
-        # Testo normale giustificato per leggibilità
-        style_normal = ParagraphStyle(
-            'TALDNormal', 
-            parent=styles['Normal'], 
-            fontSize=10, 
-            leading=14,
-            alignment=TA_JUSTIFY
-        )
-        
-        # Stili per esiti 
-        style_ok = ParagraphStyle(
-            'ResultOK', 
-            parent=style_normal, 
-            textColor=colors.HexColor('#27ae60'), 
-            fontName='Helvetica-Bold',
-            alignment=TA_CENTER  
-        )
-        
-        style_err = ParagraphStyle(
-            'ResultERR', 
-            parent=style_normal, 
-            textColor=colors.HexColor('#c0392b'), 
-            fontName='Helvetica-Bold',
-            alignment=TA_CENTER  
-        )
-        
-        style_warn = ParagraphStyle(
-            'ResultWARN', 
-            parent=style_normal, 
-            textColor=colors.HexColor('#e67e22'), 
-            fontName='Helvetica-Bold',
-            alignment=TA_CENTER  
-        )
-        
-        # Stile per il punteggio (Verde/Rosso dinamico)
-        score_color = colors.HexColor('#27ae60') if report.result.is_passing_score() else colors.HexColor('#c0392b')
-        style_score = ParagraphStyle(
-            'TALDScore',
-            parent=styles['Normal'],
-            fontSize=12,
-            textColor=score_color,
-            fontName='Helvetica-Bold'
-        )
+        style_title = ParagraphStyle('TALDTitle', parent=styles['Heading1'], fontSize=22, textColor=colors.HexColor('#2c3e50'), spaceAfter=2, leading=28)
+        style_subtitle = ParagraphStyle('TALDSub', parent=styles['Normal'], fontSize=13, textColor=colors.HexColor('#7f8c8d'), spaceAfter=6, leading=16)
+        style_h2 = ParagraphStyle('TALDH2', parent=styles['Heading2'], fontSize=14, spaceBefore=12, spaceAfter=10, textColor=colors.HexColor('#34495e'), backColor=colors.HexColor('#f8f9fa'), borderPadding=5, keepWithNext=True)
+        style_h2_free = ParagraphStyle('TALDH2_Free', parent=style_h2, keepWithNext=False) 
 
-        # --- Costruzione Contenuto (Story) ---
-        elements = []
+        style_score = ParagraphStyle('TALDScore', parent=styles['Normal'], fontSize=12, alignment=TA_CENTER, spaceBefore=6, textColor=colors.HexColor('#27ae60') if report.result.is_passing_score() else colors.HexColor('#c0392b'), fontName='Helvetica-Bold')
+        style_footer = ParagraphStyle('Footer', parent=styles['Italic'], fontSize=8, textColor=colors.grey, alignment=TA_CENTER)
 
-        # 1. HEADER (LOGO + TESTO BEN DISTANZIATI)
+        # Stili tabella esiti
+        style_ok = ParagraphStyle('ResultOK', parent=style_normal, textColor=colors.HexColor('#27ae60'), fontName='Helvetica-Bold', alignment=TA_CENTER)
+        style_err = ParagraphStyle('ResultERR', parent=style_normal, textColor=colors.HexColor('#c0392b'), fontName='Helvetica-Bold', alignment=TA_CENTER)
+        style_warn = ParagraphStyle('ResultWARN', parent=style_normal, textColor=colors.HexColor('#e67e22'), fontName='Helvetica-Bold', alignment=TA_CENTER)
+
+        # --- 1. HEADER ---
         logo_path = "assets/taldlab_logo.png"
-        
-        # Colonna Logo
         if os.path.exists(logo_path):
             img = Image(logo_path, width=2.5*cm, height=2.5*cm)
             img.hAlign = 'LEFT'
             col_logo = img
         else:
-            col_logo = Paragraph("<b>TALDLab</b>", style_title) # Fallback testuale
+            col_logo = Paragraph("<b>TALDLab</b>", style_title)
 
-        # Colonna Testo Intestazione
         title_text = [
             Paragraph("TALDLab", style_title),
             Paragraph("Report di Simulazione Clinica", style_subtitle),
-            Paragraph(f"Data: {report.timestamp.strftime('%d/%m/%Y %H:%M')}", style_date)
+            Paragraph(f"Data: {report.timestamp.strftime('%d/%m/%Y %H:%M')}", style_normal)
         ]
         
-        # Creazione Tabella Header 
-        header_table = Table([[col_logo, title_text]], colWidths=[3*cm, 13*cm])
+        header_table = Table([[col_logo, title_text]], colWidths=[2.5*cm, 13.5*cm])
         header_table.setStyle(TableStyle([
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
             ('LEFTPADDING', (0,0), (-1,-1), 0),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 20), 
+            ('BOTTOMPADDING', (0,0), (-1,-1), 10),
         ]))
-        elements.append(header_table)
-        elements.append(Spacer(1, 0.2*cm))
+        story.append(header_table)
+        story.append(Spacer(1, 0.5*cm))
 
-        # 2. RIEPILOGO VALUTAZIONE (Tabella)
-        elements.append(KeepTogether([
-            Paragraph("Riepilogo Valutazione", style_h2),
-            self._create_summary_table(report, style_ok, style_err, style_warn, all_items),
-            Spacer(1, 0.5*cm)
-        ]))
+        # --- 2. RIEPILOGO VALUTAZIONE ---
+        # Usiamo lo stile "Free" per non incollare rigidamente il titolo alla tabella intera
+        story.append(Paragraph("Riepilogo Valutazione", style_h2_free))
         
-        # Punteggio sotto la tabella
-        elements.append(Paragraph(f"Punteggio Complessivo: {report.result.score}/100 ({report.result.get_performance_level()})", style_score))
-        elements.append(Spacer(1, 1.0*cm))
+        summary_table = self._create_summary_table(report, style_ok, style_err, style_warn, all_items)
+        story.append(summary_table)
+        story.append(Spacer(1, 0.3*cm))
 
-        # 3. SPIEGAZIONE CLINICA 
-        # Titolo Sezione
-        elements.append(Paragraph("Analisi Clinica (AI Generated)", style_h2))
-        
-        # Generazione dinamica dei paragrafi
-        ai_flowables = self._parse_ai_response_to_flowables(
-            report.clinical_explanation, 
-            style_normal, 
-            style_h3
-        )
-        elements.extend(ai_flowables)
-        
-        # Spazio finale
-        elements.append(Spacer(1, 1.0*cm))
-        
-        # 4. DETTAGLI ITEM (Box informativo bordato)
-        elements.append(KeepTogether([
-            Paragraph("Dettagli Item Simulato", style_h2),
-            self._create_item_details_table(report, style_normal),
-            Spacer(1, 1.0*cm)
-        ]))
+        # Creazione Paragrafo Punteggio (da usare dopo)
+        score_text = f"Punteggio Complessivo: {report.result.score}/100 ({report.result.get_performance_level()})"
+        score_paragraph = Paragraph(score_text, style_score)
 
-        # 5. STATISTICHE E NOTE PERSONALI
+       # --- GESTIONE LOGICA MODALITÀ ---
+        
+        # CASO A: ESPLORATIVA CON PAZIENTE SANO (Ground Truth vuoto)
+        if not report.ground_truth.active_items:
+            # Stile per l'avviso "Paziente Sano"
+            style_alert = ParagraphStyle(
+                'HealthyAlert', parent=styles['Heading3'], 
+                textColor=colors.HexColor('#2980b9'), 
+                alignment=TA_CENTER, spaceAfter=2
+            )
+            
+            # Creiamo un blocco unico inscindibile
+            block_elements = [
+                Paragraph("ℹ️ DIAGNOSI REALE: PAZIENTE SANO", style_alert),
+                Paragraph("(Nessun disturbo del pensiero o del linguaggio presente)", style_footer),
+                Spacer(1, 0.4*cm),
+                score_paragraph  
+            ]
+            
+            story.append(KeepTogether(block_elements))
+        
+        # CASO B: GUIDATA O ESPLORATIVA CON DISTURBI
+        else:
+            # Aggiungiamo semplicemente il punteggio sotto la tabella
+            story.append(score_paragraph)
+
+        story.append(Spacer(1, 0.8*cm))
+
+       # --- 3. ANALISI CLINICA (AI) ---
+        
+        # 1. Genera i blocchi
+        clinical_objects = self._create_clinical_flowables(report.clinical_explanation, styles)
+        
+        # 2. Titolo H2 Principale
+        analysis_title = Paragraph("Analisi Clinica (AI Generated)", style_h2)
+        
+        if clinical_objects:
+            # Estraiamo il primo blocco (che è già un KeepTogether [H3, P1])
+            first_kt = clinical_objects[0]
+            
+            # Creiamo una lista piatta: [Titolo H2, Titolo H3, Paragrafo 1]
+            flat_elements = [analysis_title]
+            
+            if isinstance(first_kt, KeepTogether):
+                # Estraiamo i componenti interni del primo blocco
+                flat_elements.extend(first_kt._content)
+            else:
+                flat_elements.append(first_kt)
+            
+            # Creiamo un UNICO KeepTogether piatto e pulito
+            story.append(KeepTogether(flat_elements))
+            
+            # Aggiungiamo tutti gli altri blocchi normalmente
+            story.extend(clinical_objects[1:])
+        else:
+            story.append(analysis_title)
+            story.append(Paragraph("Nessuna analisi disponibile.", style_normal))
+            
+        story.append(Spacer(1, 0.8*cm))
+
+        # --- 4. DETTAGLI ITEM ---
+        target_items = []
+        # Recuperiamo le chiavi degli item ATTIVI (quindi escludiamo automaticamente quelli non presenti)
+        active_item_ids = report.ground_truth.active_items.keys()
+
+        # LOGICA DI SELEZIONE
+        if report.ground_truth.is_guided_mode():
+            # Modalità Guidata: solo l'item studiato
+            if report.tald_item:
+                target_items.append(report.tald_item)
+        else:
+            # Modalità Esplorativa: recuperiamo TUTTI gli item reali dal DB completo
+            if all_items:
+                # Li ordiniamo per ID per averli numerati progressivamente (Item 1, Item 2...)
+                sorted_ids = sorted(active_item_ids)
+                for iid in sorted_ids:
+                    found = next((i for i in all_items if i.id == iid), None)
+                    if found:
+                        target_items.append(found)
+
+        # GENERAZIONE PDF
+        if target_items:
+            # 1. Prepariamo l'oggetto Titolo Sezione MA NON lo aggiungiamo ancora alla story
+            section_title_text = "Dettagli Item Simulati" if len(target_items) > 1 else "Dettagli Item Simulato"
+            section_header_paragraph = Paragraph(section_title_text, style_h2)
+
+            # 2. Cicliamo usando enumerate per sapere se siamo al primo giro (index == 0)
+            for index, item in enumerate(target_items):
+                
+                # --- Preparazione Testi e Colori (Come prima) ---
+                title_text = f"Item {item.id}. {item.title}"
+                status_text = ""
+                status_color = colors.HexColor('#2c3e50') 
+                
+                if report.ground_truth.is_guided_mode():
+                    status_text = "(Modalità Guidata)"
+                    status_color = colors.HexColor('#7f8c8d') 
+                else:
+                    user_grade = report.user_evaluation.get_grade_for_item(item.id)
+                    real_grade = report.ground_truth.active_items.get(item.id, 0)
+                    
+                    if user_grade == 0:
+                        status_text = f"OMESSO (Reale: {real_grade}/4)"
+                        status_color = colors.HexColor('#c0392b') 
+                    elif user_grade == real_grade:
+                        status_text = f"CORRETTO (Grado: {user_grade}/4)"
+                        status_color = colors.HexColor('#27ae60') 
+                    else:
+                        status_text = f"IMPRECISO (Tuo: {user_grade}/4 | Reale: {real_grade}/4)"
+                        status_color = colors.HexColor('#e67e22') 
+
+                # --- Stili (Come prima) ---
+                style_line1 = ParagraphStyle('ItemName', parent=styles['Heading3'], fontSize=12, textColor=colors.HexColor('#2c3e50'), spaceAfter=2)
+                style_line2 = ParagraphStyle('ItemStatus', parent=styles['Normal'], fontSize=11, textColor=status_color, fontName='Helvetica-Bold', spaceAfter=6)
+                
+                # --- COSTRUZIONE BLOCCO ---
+                # Creiamo la lista degli elementi di QUESTO item
+                item_elements = [
+                    Paragraph(title_text, style_line1),
+                    Paragraph(status_text, style_line2),
+                    self._create_item_details_table_dynamic(item, style_normal)
+                ]
+
+                if index == 0:
+                    item_elements.insert(0, section_header_paragraph)
+
+                # Aggiungiamo tutto il blocco unito alla storia
+                story.append(KeepTogether(item_elements))
+                
+                story.append(Spacer(1, 0.6*cm))
+
+        story.append(Spacer(1, 0.8*cm))
+
+        # --- 5. STATISTICHE E FOOTER ---
+        final_block = []
         stats_text = (
             f"Durata: {report.conversation_summary['duration_minutes']} min | "
             f"Messaggi: {report.conversation_summary['total_messages']} | "
             f"Parole: {report.conversation_summary['total_words']}"
         )
+        final_block.append(Paragraph("Statistiche Conversazione", style_h2))
+        final_block.append(Paragraph(stats_text, style_normal))
         
-        notes_section = []
         if report.user_evaluation.notes:
-            notes_section.append(Paragraph("<b>Note Personali:</b>", style_normal))
-            notes_section.append(Paragraph(report.user_evaluation.notes, style_normal))
+            final_block.append(Spacer(1, 0.3*cm))
+            final_block.append(Paragraph(f"<b>Note Personali:</b> {html.escape(report.user_evaluation.notes)}", style_normal))
             
-        elements.append(KeepTogether([
-            Paragraph("Statistiche Conversazione", style_h2),
-            Paragraph(stats_text, style_normal),
-            Spacer(1, 0.5*cm),
-            *notes_section
-        ]))
+        final_block.append(Spacer(1, 0.5*cm))
+        final_block.append(Paragraph(f"Generato da TALDLab il {report.timestamp.strftime('%d/%m/%Y')}", style_footer))
 
-        # Footer (Piè di pagina)
-        elements.append(Spacer(1, 1*cm))
-        elements.append(Paragraph(
-            f"Generato da TALDLab il {report.timestamp.strftime('%d/%m/%Y')}",
-            ParagraphStyle('Footer', parent=styles['Italic'], fontSize=8, textColor=colors.grey, alignment=TA_CENTER)
-        ))
+        story.append(KeepTogether(final_block))
 
-        # Generazione fisica del file in memoria
-        doc.build(elements)
-        
-        # Riposiziona il cursore all'inizio del buffer per la lettura
+        # Build
+        doc.build(story)
         buffer.seek(0)
         return buffer
 
-    def _create_summary_table(self, report: Report, style_ok, style_err, style_warn, all_items: list[TALDItem] = None) -> Table:
-        """
-        Crea la tabella riepilogo per il PDF.
-        Usa Paragraph per gestire il testo lungo che va a capo.
-        """
-        # Creiamo uno stile "neutro" per le celle di testo normale che devono andare a capo
+    def _create_summary_table(self, report: Report, style_ok, style_err, style_warn, all_items: List[TALDItem] = None) -> Table:
+        """Crea la tabella riepilogo per il PDF."""
+        
         styles = getSampleStyleSheet()
-        style_cell = ParagraphStyle(
-            'CellText',
-            parent=styles['Normal'],
-            fontSize=10,
-            alignment=TA_CENTER, # Centrato come il resto della tabella
-            leading=12,          # Interlinea
+        
+        # 1. Definisco gli stili necessari (ENTRAMBI)
+        style_cell_left = ParagraphStyle('CellLeft', parent=styles['Normal'], fontSize=10, alignment=TA_LEFT, textColor=colors.black)
+        
+        style_cell_center = ParagraphStyle(
+            'CellCenter', 
+            parent=styles['Normal'], 
+            fontSize=10, 
+            alignment=TA_CENTER, 
             textColor=colors.black
         )
 
-        # --- 1. Preparazione Testo Ground Truth ---
-        # Avvolgiamo in Paragraph così va a capo se lungo
-        gt_text = f"{report.tald_item.id}. {report.tald_item.title}"
-        gt_cell = Paragraph(gt_text, style_cell)
+        # Helper per titolo item
+        def get_title(iid):
+            if not all_items: return f"Item {iid}"
+            item = next((i for i in all_items if i.id == iid), None)
+            return item.title if item else f"Item {iid}"
 
-        # --- 2. Preparazione Testo Utente ---
+        # === CASO 1: MODALITÀ ESPLORATIVA ===
         if report.ground_truth.is_exploratory_mode():
-            user_id = report.user_evaluation.item_id
+            data = [["Disturbo (Item TALD)", "Esito Diagnosi", "Tuo Voto", "Reale"]]
             
-            # Cerca il titolo
-            user_text_str = f"ID {user_id}" 
-            if all_items and user_id:
-                found = next((i for i in all_items if i.id == user_id), None)
-                if found:
-                    user_text_str = f"{found.id}. {found.title}"
+            tp = report.result.true_positives
+            fn = report.result.false_negatives
+            fp = report.result.false_positives
+            all_involved = sorted(list(set(tp + fn + fp)))
             
-            # Avvolgiamo in Paragraph
-            user_item_cell = Paragraph(user_text_str, style_cell)
+            if not all_involved:
+                data.append([Paragraph("Nessun disturbo", style_cell_left), Paragraph("CORRETTO", style_ok), "-", "-"])
+            else:
+                for iid in all_involved:
+                    title = get_title(iid)
+                    user_g = report.user_evaluation.get_grade_for_item(iid)
+                    real_g = report.ground_truth.active_items.get(iid, 0)
+                    
+                    if iid in tp:
+                        diff = abs(user_g - real_g)
+                        status = Paragraph("CORRETTO", style_ok) if diff == 0 else Paragraph(f"IMPRECISO", style_warn)
+                    elif iid in fn:
+                        status = Paragraph("OMESSO", style_err)
+                    else: # fp
+                        status = Paragraph("NON PRESENTE", style_err)
+
+                    data.append([
+                        Paragraph(f"<b>{title}</b>", style_cell_left),
+                        status,
+                        str(user_g) if user_g > 0 else "-",
+                        str(real_g) if real_g > 0 else "-"
+                    ])
+
+            col_widths = [6.5*cm, 4.5*cm, 2.5*cm, 2.5*cm]
             
-            # Esito (Paragraph colorato)
-            res_item = Paragraph("CORRETTO", style_ok) if report.result.item_correct else Paragraph("ERRATO", style_err)
+            # Definizione stile Esplorativa
+            exploratory_style = TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2c3e50')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('ALIGN', (0, 1), (0, -1), 'LEFT'), # Prima colonna allineata a SX
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.whitesmoke, colors.white]),
+            ])
+
+            t = Table(data, colWidths=col_widths, repeatRows=1)
+            t.setStyle(exploratory_style)
+            return t
+
+        # === CASO 2: MODALITÀ GUIDATA ===
         else:
-            user_item_cell = Paragraph("N/A (Guidata)", style_cell)
-            res_item = "-"
+            # 1. Recupero Dati Sicuro
+            if report.tald_item:
+                item_full_name = f"{report.tald_item.id}. {report.tald_item.title}"
+            else:
+                item_full_name = "Item Target"
+            
+            primary_id, gt_grade = report.ground_truth.get_primary_item()
+            user_grade = report.user_evaluation.get_grade_for_item(primary_id)
+            diff = abs(gt_grade - user_grade)
+            
+            # 2. Calcolo Esito
+            if diff == 0: 
+                res_grade = Paragraph("CORRETTO", style_ok)
+            elif diff == 1: 
+                res_grade = Paragraph("IMPRECISO", style_warn)
+            else: 
+                res_grade = Paragraph("ERRATO", style_err)
 
-        # --- 3. Preparazione Grado ---
-        # Anche i gradi li mettiamo in Paragraph per coerenza di font/stile
-        gt_grade_cell = Paragraph(f"{report.ground_truth.grade}/4", style_cell)
-        user_grade_cell = Paragraph(f"{report.user_evaluation.grade}/4", style_cell)
+            # 3. Costruzione Dati 
+            data = [
+                ["Item Simulato", "Grado Reale", "Tuo Grado", "Esito"],
+                [
+                    # Qui ho cambiato style_cell_left in style_cell_center
+                    Paragraph(f"<b>{item_full_name}</b>", style_cell_center), 
+                    Paragraph(f"{gt_grade}/4", style_cell_center),              
+                    Paragraph(f"{user_grade}/4", style_cell_center),          
+                    res_grade                                                 
+                ]
+            ]
+            
+            # 4. Larghezze colonne
+            col_widths = [7.0*cm, 3.0*cm, 3.0*cm, 3.0*cm]
 
-        if report.result.grade_correct:
-            res_grade = Paragraph("CORRETTO", style_ok)
-        elif report.result.grade_difference == 1:
-            res_grade = Paragraph("IMPRECISO", style_warn)
-        else:
-            res_grade = Paragraph("ERRATO", style_err)
+            # 5. Definizione stile Guidata
+            guided_style = TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2c3e50')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+                ('TOPPADDING', (0, 0), (-1, -1), 10),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white]),
+            ])
 
-        # --- 4. Costruzione Dati Tabella ---
-        data = [
-            ["Parametro", "Ground Truth", "Valutazione Utente", "Esito"],
-            # Nota: Ora passiamo gli oggetti Paragraph, non stringhe
-            ["Item TALD", gt_cell, user_item_cell, res_item],
-            ["Grado", gt_grade_cell, user_grade_cell, res_grade]
-        ]
-        
-        # Le larghezze colonne (colWidths) ora funzionano come limiti:
-        # Il testo andrà a capo se supera i 6.0cm o 4.0cm definiti qui sotto.
-        t = Table(data, colWidths=[3.5*cm, 6.0*cm, 4.0*cm, 2.5*cm])
-        
-        t.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#34495e')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),     # Allineamento orizzontale
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),    # Allineamento verticale
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 10),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#fdfdfd')),
-            ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#bdc3c7')),
-            # Rimuoviamo eventuali padding manuali che potrebbero stringere troppo il testo
-            ('LEFTPADDING', (0,0), (-1,-1), 6),
-            ('RIGHTPADDING', (0,0), (-1,-1), 6),
-        ]))
-        
-        return t
+            t = Table(data, colWidths=col_widths, repeatRows=1)
+            t.setStyle(guided_style)
+            return t
 
-    def _create_item_details_table(self, report: Report, style_normal: ParagraphStyle) -> Table:
+    def _create_item_details_table_dynamic(self, item: TALDItem, style_normal: ParagraphStyle) -> Table:
         """
         Crea la tabella dettagli item per il PDF.
-        Incapsula le informazioni statiche in un box pulito.
+        Incapsula le informazioni statiche in un box pulito
         """
+        if not item: return Table([[""]])
+        
+        desc = html.escape(item.description)
+        crit = html.escape(item.criteria)
+        exmp = html.escape(item.example)
+
+        # Grassetto nei titoli
         item_info = [
-            [Paragraph(f"<b>Descrizione:</b> {report.tald_item.description}", style_normal)],
-            [Paragraph(f"<b>Criteri:</b> {report.tald_item.criteria}", style_normal)],
-            [Paragraph(f"<b>Esempio:</b> {report.tald_item.example}", style_normal)]
+            [Paragraph(f"<b>Descrizione:</b><br/>{desc}", style_normal)],
+            [Paragraph(f"<b>Criteri Diagnostici:</b><br/>{crit}", style_normal)],
+            [Paragraph(f"<b>Esempio Clinico:</b><br/>{exmp}", style_normal)]
         ]
+        
         t = Table(item_info, colWidths=[16*cm])
         t.setStyle(TableStyle([
-            ('BOX', (0,0), (-1,-1), 0.25, colors.grey),
-            ('LEFTPADDING', (0,0), (-1,-1), 10),
-            ('RIGHTPADDING', (0,0), (-1,-1), 10),
-            ('TOPPADDING', (0,0), (-1,-1), 5),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+            ('BOX', (0,0), (-1,-1), 0.5, colors.grey),
+            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#f9f9f9')), 
+            ('LEFTPADDING', (0,0), (-1,-1), 12),
+            ('RIGHTPADDING', (0,0), (-1,-1), 12),
+            ('TOPPADDING', (0,0), (-1,-1), 8),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+            ('GRID', (0,0), (-1,-1), 0.25, colors.lightgrey), 
         ]))
         return t

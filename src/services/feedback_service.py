@@ -5,11 +5,10 @@ Questo modulo gestisce la raccolta, la validazione e la persistenza dei feedback
 qualitativi forniti dagli utenti al termine della simulazione.
 
 Responsabilità principali:
-- Validazione formale dei dati di input (range numerici, lunghezza testi)
-- Costruzione dell'entità Feedback (Entity)
+- Validazione formale dei dati di input (range numerici 1-5, lunghezza testi)
+- Costruzione dell'entità Feedback (Entity) con i 5 campi richiesti (S1-S4 + Commenti)
 - Anonimizzazione dei dati (esclusione di identificativi personali)
 - Persistenza su filesystem (JSON) con gestione della concorrenza
-- Calcolo statistiche aggregate per monitoraggio qualità
 
 Pattern Architetturale: Control (Componente della logica di business)
 Riferimento RAD: Sezione 2.6.1 (Dizionario dei dati - FeedbackService)
@@ -30,29 +29,32 @@ class Feedback:
     """
     Entity che rappresenta un singolo feedback utente.
     
-    Incapsula i dati valutativi e i metadati della sessione, garantendo
-    che la struttura dati sia coerente prima della serializzazione.
+    Implementa la struttura definita nel RAD (RF_10):
+    4 metriche quantitative su scala 1-5 e un campo qualitativo.
     
     Attributes:
-        overall_rating (Optional[int]): Valutazione generale (scala 1-5)
-        realism_rating (Optional[int]): Realismo percepito (scala 1-5)
-        usefulness_rating (Optional[int]): Utilità didattica (scala 1-5)
-        comments (str): Commenti qualitativi liberi
+        score_accuracy (int): Accuratezza del punteggio TALD (1-5)
+        explanation_quality (int): Qualità della spiegazione clinica (1-5)
+        overall_satisfaction (int): Soddisfazione generale (1-5)
+        simulation_realism (int): Realismo della simulazione (1-5)
+        comments (str): Note qualitative libere
         metadata (Dict): Dati di contesto non identificativi (item, modalità)
         timestamp (datetime): Marca temporale di creazione
     """
     
     def __init__(
         self,
-        overall_rating: Optional[int],
-        realism_rating: Optional[int],
-        usefulness_rating: Optional[int],
+        score_accuracy: Optional[int],
+        explanation_quality: Optional[int],
+        overall_satisfaction: Optional[int],
+        simulation_realism: Optional[int],
         comments: str,
         metadata: Dict[str, Any]
     ):
-        self.overall_rating = overall_rating
-        self.realism_rating = realism_rating
-        self.usefulness_rating = usefulness_rating
+        self.score_accuracy = score_accuracy
+        self.explanation_quality = explanation_quality
+        self.overall_satisfaction = overall_satisfaction
+        self.simulation_realism = simulation_realism
         self.comments = comments
         self.metadata = metadata or {}
         self.timestamp = datetime.now()
@@ -67,9 +69,10 @@ class Feedback:
         return {
             "timestamp": self.timestamp.isoformat(),
             "ratings": {
-                "overall": self.overall_rating,
-                "realism": self.realism_rating,
-                "usefulness": self.usefulness_rating
+                "score_accuracy": self.score_accuracy,
+                "explanation_quality": self.explanation_quality,
+                "overall_satisfaction": self.overall_satisfaction,
+                "simulation_realism": self.simulation_realism
             },
             "comments": self.comments,
             "metadata": self.metadata
@@ -81,8 +84,7 @@ class FeedbackService:
     Service (Control) per la gestione del ciclo di vita dei feedback.
     
     Questa classe funge da interfaccia tra la View (FeedbackForm) e il livello
-    di persistenza dati (File System). Implementa controlli di integrità
-    e logiche di aggregazione.
+    di persistenza dati (File System).
     """
     
     # Percorso del file di persistenza
@@ -138,12 +140,10 @@ class FeedbackService:
         """
         Elabora, valida e salva un nuovo feedback utente.
         
-        Il metodo gestisce l'intero flusso di persistenza garantendo la thread-safety
-        tramite un meccanismo di Lock, prevenendo la corruzione del file JSON
-        in caso di accessi concorrenti.
+        Il metodo gestisce l'intero flusso di persistenza garantendo la thread-safety.
         
         Args:
-            feedback_data (dict): Dizionario contenente i voti e i commenti.
+            feedback_data (dict): Dizionario contenente i voti S1-S4 e i commenti.
             metadata (dict): Informazioni di contesto sulla sessione.
             
         Returns:
@@ -154,26 +154,27 @@ class FeedbackService:
             IOError: Se si verificano errori di scrittura su disco.
         """
         
-        # 1. Validazione Formale degli Input
-        # Verifichiamo che i rating siano nel range corretto (1-5)
-        overall = FeedbackService._validate_rating(feedback_data.get("overall_rating"), "Overall")
-        realism = FeedbackService._validate_rating(feedback_data.get("realism_rating"), "Realism")
-        usefulness = FeedbackService._validate_rating(feedback_data.get("usefulness_rating"), "Usefulness")
+        # 1. Validazione Formale degli Input 
+        s1 = FeedbackService._validate_rating(feedback_data.get("score_accuracy"), "Accuracy")
+        s2 = FeedbackService._validate_rating(feedback_data.get("explanation_quality"), "Explanation")
+        s3 = FeedbackService._validate_rating(feedback_data.get("overall_satisfaction"), "Satisfaction")
+        s4 = FeedbackService._validate_rating(feedback_data.get("simulation_realism"), "Realism")
         
         comments = str(feedback_data.get("comments", "")).strip()
         
         # 2. Controllo di Rilevanza
         # Impediamo il salvataggio di feedback completamente vuoti
-        if not any([overall, realism, usefulness, comments]):
-            raise ValueError("Impossibile salvare un feedback vuoto.")
+        if not any([s1, s2, s3, s4, comments]):
+            raise ValueError("Impossibile salvare un feedback vuoto. Compilare almeno un campo.")
 
         # 3. Creazione dell'Entity
         clean_metadata = FeedbackService._validate_metadata(metadata)
         
         feedback_entity = Feedback(
-            overall_rating=overall,
-            realism_rating=realism,
-            usefulness_rating=usefulness,
+            score_accuracy=s1,
+            explanation_quality=s2,
+            overall_satisfaction=s3,
+            simulation_realism=s4,
             comments=comments,
             metadata=clean_metadata
         )
@@ -206,7 +207,6 @@ class FeedbackService:
                 return True
                 
             except Exception as e:
-                # Log dell'errore (in produzione andrebbe su un file di log vero)
                 print(f"[ERROR] Feedback persistence failed: {e}")
                 raise IOError(f"Errore critico nel salvataggio del feedback: {str(e)}")
 
@@ -215,17 +215,15 @@ class FeedbackService:
         """
         Calcola statistiche aggregate sui feedback raccolti.
         
-        Utile per fornire un riscontro immediato all'utente ("Media voti: 4.5").
-        Legge il file JSON e calcola le medie aritmetiche dei rating.
-        
         Returns:
-            Dict: Dizionario contenente conteggi e medie.
-                  Es: {'count': 10, 'avg_overall': 4.2}
+            Dict: Conteggi e medie per S1, S2, S3, S4.
         """
         stats = {
             "count": 0,
-            "avg_overall": 0.0,
-            "avg_realism": 0.0
+            "avg_s1": 0.0,
+            "avg_s2": 0.0,
+            "avg_s3": 0.0,
+            "avg_s4": 0.0
         }
         
         if not FeedbackService.FEEDBACK_FILE.exists():
@@ -241,18 +239,19 @@ class FeedbackService:
             total_count = len(data)
             
             # Estrazione liste di voti (filtrando i None)
-            overalls = [d['ratings']['overall'] for d in data if d['ratings'].get('overall')]
-            realisms = [d['ratings']['realism'] for d in data if d['ratings'].get('realism')]
+            s1_list = [d['ratings']['score_accuracy'] for d in data if d['ratings'].get('score_accuracy')]
+            s2_list = [d['ratings']['explanation_quality'] for d in data if d['ratings'].get('explanation_quality')]
+            s3_list = [d['ratings']['overall_satisfaction'] for d in data if d['ratings'].get('overall_satisfaction')]
+            s4_list = [d['ratings']['simulation_realism'] for d in data if d['ratings'].get('simulation_realism')]
             
             # Calcolo Medie
-            avg_overall = sum(overalls) / len(overalls) if overalls else 0
-            avg_realism = sum(realisms) / len(realisms) if realisms else 0
+            stats["count"] = total_count
+            stats["avg_s1"] = round(sum(s1_list) / len(s1_list), 1) if s1_list else 0
+            stats["avg_s2"] = round(sum(s2_list) / len(s2_list), 1) if s2_list else 0
+            stats["avg_s3"] = round(sum(s3_list) / len(s3_list), 1) if s3_list else 0
+            stats["avg_s4"] = round(sum(s4_list) / len(s4_list), 1) if s4_list else 0
             
-            return {
-                "count": total_count,
-                "avg_overall": round(avg_overall, 1),
-                "avg_realism": round(avg_realism, 1)
-            }
+            return stats
             
         except Exception as e:
             print(f"[WARNING] Errore nel calcolo statistiche: {e}")

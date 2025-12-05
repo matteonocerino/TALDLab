@@ -143,11 +143,11 @@ class ConversationHistory:
     
     messages: List[ConversationMessage] = field(default_factory=list)
     session_start: datetime = None
+    time_lost_offset: float = 0.0 
     
     def __post_init__(self):
         """Inizializzazione timestamp sessione."""
-        if self.session_start is None:
-            self.session_start = datetime.now()
+        pass
     
     def add_message(self, role: str, content: str) -> ConversationMessage:
         """
@@ -165,6 +165,10 @@ class ConversationHistory:
             >>> msg = history.add_message("user", "Dimmi di più")
         """
         message = ConversationMessage(role=role, content=content)
+
+        if self.session_start is None:
+            self.session_start = message.timestamp
+
         self.messages.append(message)
         return message
     
@@ -216,7 +220,13 @@ class ConversationHistory:
         
         last_message = self.messages[-1]
         duration = (last_message.timestamp - self.session_start).total_seconds()
-        return round(duration / 60, 2)
+        duration_minutes = duration / 60
+
+        offset = getattr(self, 'time_lost_offset', 0.0)
+        effective_minutes = duration_minutes - self.time_lost_offset
+        
+        # Protezione valori negativi
+        return round(max(0.0, effective_minutes), 2)
     
     def get_total_words(self) -> int:
         """
@@ -235,7 +245,8 @@ class ConversationHistory:
         Utilizzato quando si avvia una nuova simulazione.
         """
         self.messages.clear()
-        self.session_start = datetime.now()
+        self.session_start = None
+        self.time_lost_offset = 0.0
     
     def to_text_transcript(self) -> str:
         """
@@ -257,6 +268,11 @@ class ConversationHistory:
             lines.append(f"[{time_str}] {role_label}: {msg.content}")
         
         transcript_body = "\n".join(lines)
+
+        if self.session_start:
+            date_str = self.session_start.strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            date_str = "N/A"
 
         header = f"""
 TALDLab - Trascrizione Intervista
